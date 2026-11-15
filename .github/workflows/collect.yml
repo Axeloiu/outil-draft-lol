@@ -2,11 +2,12 @@ name: Collecte des parties Master+
 
 on:
   schedule:
-    - cron: '7 * * * *'   # toutes les heures, à la 7e minute
+    - cron: '7 */3 * * *' # filet de sécurité si la chaîne s'arrête (le cron GitHub est souvent en retard)
   workflow_dispatch: {}    # bouton « Run workflow » pour lancer à la main
 
 permissions:
   contents: write
+  actions: write   # pour relancer le passage suivant
 
 concurrency:
   group: collecte
@@ -44,3 +45,13 @@ jobs:
           git commit -q -m "stats $(date -u +%Y-%m-%dT%H:%MZ)" --allow-empty
           git reset -q --soft $(git commit-tree HEAD^{tree} -m "stats $(date -u +%Y-%m-%dT%H:%MZ)")
           git push -q -f origin HEAD:data
+
+      # Chaîne continue : chaque passage lance le suivant (le cron seul saute souvent des heures).
+      # Pas de relance si la clé est refusée. Pour tout arrêter : Actions > ce workflow > Disable workflow.
+      - name: Relance du passage suivant
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if python3 -c "import json,sys; sys.exit(1 if json.load(open('data/stats.json')).get('stop') else 0)"; then
+            gh workflow run collect.yml --repo "${{ github.repository }}" --ref main
+          fi
