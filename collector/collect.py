@@ -12,6 +12,10 @@ Compteurs, par patch :
   ct  champion|rôle -> scénario         -> [parties, victoires]
   it  champion|rôle -> scénario -> objet final -> [parties, victoires]
 Scénarios = profil de la compo adverse : all, ap3, ad4, cc3, heal2, shield2, tank2, burst2, auto3.
+Files : solo/duo (420) et flex (440), comptées à part (clé « patch|file »).
+En plus des compteurs, une ligne par partie est ajoutée à rows/AAAA-MM-JJ.jsonl.gz (pour le modèle appris et
+les simulations) : patch, file, durée, début, équipe gagnante, et pour chaque équipe les 5 champions avec rôle,
+objets finaux et sorts. Aucun identifiant de joueur.
 
 La clé Riot vient de la variable d'environnement RIOT_API_KEY (secret du dépôt), jamais du code.
 Bibliothèque standard uniquement.
@@ -24,6 +28,9 @@ REGIONS = [r.strip() for r in os.environ.get('REGIONS', 'euw1,kr').split(',') if
 BUDGET = int(os.environ.get('BUDGET_SECONDS', str(50 * 60)))
 BASE = os.environ.get('RIOT_BASE', '')  # tests : serveur factice, ex. http://127.0.0.1:9000/{host}
 STATE = sys.argv[1] if len(sys.argv) > 1 else 'state.json.gz'
+QUEUES = (420, 440)
+LADDER_QUEUES = ('RANKED_SOLO_5x5', 'RANKED_FLEX_SR')
+ROWS_KEEP_DAYS = 21
 OUT = sys.argv[2] if len(sys.argv) > 2 else 'stats.json'
 HERE = os.path.dirname(os.path.abspath(__file__))
 # profil compact par champion : type de dégâts (AD/AP/T) puis 6 drapeaux cc, tank, burst, heal, shield, auto
@@ -54,7 +61,7 @@ class Limiter:
     """Limites d'une clé personnelle, par hôte : 20 req / 1 s et 100 req / 120 s (avec une marge)."""
     def __init__(self, rules=None):
         # surcharge possible pour les tests : RATE="19/1,95/120"
-        spec = os.environ.get('RATE', '19/1,95/120')
+        spec = os.environ.get('RATE', '19/1,90/120')
         self.rules = rules or tuple((int(a), float(b)) for a, b in (x.split('/') for x in spec.split(',')))
         self.q = deque()
 
@@ -112,7 +119,7 @@ def load_state():
     if os.path.exists(STATE):
         with gzip.open(STATE, 'rt', encoding='utf-8') as f:
             return json.load(f)
-    return {'v': 1, 'regions': {}, 'seen': {}, 'stats': {}}
+    return {'v': 2, 'regions': {}, 'seen': {}, 'stats': {}}
 
 
 def save_state(st):
@@ -146,16 +153,31 @@ def add(d, key, win):
     v[1] += 1 if win else 0
 
 
+ROWS = []
+
+
+def row_of(info, patch, q):
+    ps = info.get('participants') or []
+    win = next((p.get('teamId') for p in ps if p.get('win')), 0)
+    side = lambda t: [[p.get('championId'), POS.get(p.get('teamPosition') or '', ''),
+                       [p.get(f'item{i}') for i in range(7) if p.get(f'item{i}')],
+                       [p.get('summoner1Id'), p.get('summoner2Id')]] for p in ps if p.get('teamId') == t]
+    return {'p': patch, 'q': q, 'd': info.get('gameDuration'), 't': int((info.get('gameStartTimestamp') or 0) / 1000),
+            'w': 'B' if win == 100 else 'R' if win == 200 else '', 'B': side(100), 'R': side(200)}
+
+
 def count_match(st, m):
     info = m.get('info') or {}
-    if info.get('queueId') != 420 or (info.get('gameDuration') or 0) < 900:
+    q = info.get('queueId')
+    if q not in QUEUES or (info.get('gameDuration') or 0) < 900:
         return False
     ver = str(info.get('gameVersion', ''))
     patch = '.'.join(ver.split('.')[:2]) if ver else 'x'
     ps = info.get('participants') or []
     if len(ps) != 10:
         return False
-    S = st['stats'].setdefault(patch, {'n': 0, 'cr': {}, 'mu': {}, 'ct': {}, 'it': {}})
+    ROWS.append(row_of(info, patch, q))
+    S = st['stats'].setdefault(f'{patch}|{q}', {'n': 0, 'cr': {}, 'mu': {}, 'ct': {}, 'it': {}})
     S['n'] += 1
     teams = {}
     for p in ps:
@@ -189,12 +211,15 @@ def run_region(st, region):
     R = st['regions'].setdefault(region, {'ladder_at': 0, 'players': [], 'cursor': 0, 'last': {}})
     now = time.time()
     if now - R['ladder_at'] > LADDER_EVERY or not R['players']:
-        ids = []
-        for tier in ('challengerleagues', 'grandmasterleagues', 'masterleagues'):
-            d = get(plat, f'/lol/league/v4/{tier}/by-queue/RANKED_SOLO_5x5')
-            for e in (d or {}).get('entries', []):
-                if e.get('puuid'):
-                    ids.append(e['puuid'])
+        ids, seen_p = [], set()
+        # solo puis flex, et dans chaque file Challenger, puis Grandmaster, puis Master
+        for lq in LADDER_QUEUES:
+            for tier in ('challengerleagues', 'grandmasterleagues', 'masterleagues'):
+                d = get(plat, f'/lol/league/v4/{tier}/by-queue/{lq}')
+                for e in (d or {}).get('entries', []):
+                    pu = e.get('puuid')
+                    if pu and pu not in seen_p:
+                        seen_p.add(pu); ids.append(pu)
         if ids:
             with LOCK:
                 R['players'], R['ladder_at'], R['cursor'] = ids, now, 0
@@ -205,7 +230,7 @@ def run_region(st, region):
         puuid = R['players'][i]
         R['cursor'] = i + 1
         since = int(max(R['last'].get(puuid, 0), time.time() - LOOKBACK))
-        mids = get(reg, f'/lol/match/v5/matches/by-puuid/{puuid}/ids', {'queue': 420, 'type': 'ranked', 'startTime': since, 'count': 20})
+        mids = get(reg, f'/lol/match/v5/matches/by-puuid/{puuid}/ids', {'type': 'ranked', 'startTime': since, 'count': 20})
         if mids is None:
             continue
         R['last'][puuid] = int(time.time())
@@ -225,10 +250,34 @@ def run_region(st, region):
     return n_new
 
 
+def write_rows():
+    if not ROWS:
+        return
+    d = os.path.join(os.path.dirname(os.path.abspath(OUT)), 'rows')
+    os.makedirs(d, exist_ok=True)
+    fn = os.path.join(d, time.strftime('%Y-%m-%d', time.gmtime()) + '.jsonl.gz')
+    with gzip.open(fn, 'at', encoding='utf-8') as f:  # ajout : un fichier par jour, plusieurs blocs gzip
+        for r in ROWS:
+            f.write(json.dumps(r, separators=(',', ':')) + '\n')
+    cutoff = time.strftime('%Y-%m-%d', time.gmtime(time.time() - ROWS_KEEP_DAYS * 86400))
+    for name in os.listdir(d):
+        if name.endswith('.jsonl.gz') and name[:10] < cutoff:
+            os.remove(os.path.join(d, name))
+    log(f'{len(ROWS)} lignes ajoutées à rows/{os.path.basename(fn)}')
+
+
+def migrate(st):
+    # v1 : stats par patch seul (solo/duo) -> clé « patch|420 »
+    for k in [k for k in st['stats'] if '|' not in k]:
+        st['stats'][k + '|420'] = st['stats'].pop(k)
+    st['v'] = 2
+
+
 def write_out(st):
-    patches = sorted(st['stats'], key=lambda p: [int(x) if x.isdigit() else 0 for x in p.split('.')])
-    for p in patches[:-KEEP_PATCHES]:
-        del st['stats'][p]
+    pver = lambda k: [int(x) if x.isdigit() else 0 for x in k.split('|')[0].split('.')]
+    patches = sorted({k.split('|')[0] for k in st['stats']}, key=lambda p: pver(p))
+    for k in [k for k in st['stats'] if k.split('|')[0] in patches[:-KEEP_PATCHES]]:
+        del st['stats'][k]
     cutoff = time.time() - LOOKBACK - 86400
     st['seen'] = {k: v for k, v in st['seen'].items() if v >= cutoff}
     for R in st['regions'].values():
@@ -244,6 +293,7 @@ def write_out(st):
 
 def main():
     st = load_state()
+    migrate(st)
     if not KEY:
         STOP['reason'] = 'aucune clé Riot (secret RIOT_API_KEY manquant)'
         log(STOP['reason'])
@@ -254,6 +304,7 @@ def main():
     if STOP['reason']:
         log('arrêt : ' + STOP['reason'])
     write_out(st)
+    write_rows()
     save_state(st)
     tot = sum(s['n'] for s in st['stats'].values())
     log(f'total gardé : {tot} parties sur {len(st["stats"])} patch(s)')
