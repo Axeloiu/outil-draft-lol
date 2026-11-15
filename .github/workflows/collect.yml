@@ -40,7 +40,7 @@ jobs:
           cd data
           git config user.name "collecteur"
           git config user.email "collecteur@users.noreply.github.com"
-          git add state.json.gz stats.json
+          git add -A
           git commit -q -m "stats $(date -u +%Y-%m-%dT%H:%MZ)" --allow-empty
           git reset -q --soft $(git commit-tree HEAD^{tree} -m "stats $(date -u +%Y-%m-%dT%H:%MZ)")
           git push -q -f origin HEAD:data
