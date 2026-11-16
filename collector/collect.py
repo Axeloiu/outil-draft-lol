@@ -43,6 +43,9 @@ POS = {'TOP': 'top', 'JUNGLE': 'jgl', 'MIDDLE': 'mid', 'BOTTOM': 'adc', 'UTILITY
 SKIP_ITEMS = {0, 2003, 2031, 2033, 2055, 2138, 2139, 2140, 3340, 3363, 3364, 3330, 2010, 2150, 2151, 2152}
 LADDER_EVERY = 12 * 3600
 LOOKBACK = 3 * 86400
+# Rattrapage : en plus des nouvelles parties, chaque visite d'un joueur remonte une page (100 parties) de son
+# historique, jusqu'à BACKFILL_DAYS jours en arrière (environ un patch), puis le joueur est marqué terminé.
+BACKFILL_DAYS = int(os.environ.get('BACKFILL_DAYS', '14'))
 KEEP_PATCHES = 3
 
 T0 = time.time()
@@ -209,6 +212,7 @@ def count_match(st, m):
 def run_region(st, region):
     plat, reg = region, REGIONAL.get(region, 'europe')
     R = st['regions'].setdefault(region, {'ladder_at': 0, 'players': [], 'cursor': 0, 'last': {}})
+    BF = R.setdefault('bf', {})  # puuid -> [ancre (endTime), décalage] ; 0 = rattrapage terminé
     now = time.time()
     if now - R['ladder_at'] > LADDER_EVERY or not R['players']:
         ids, seen_p = [], set()
@@ -225,18 +229,13 @@ def run_region(st, region):
                 R['players'], R['ladder_at'], R['cursor'] = ids, now, 0
             log(f'{region} : ladder Master+ = {len(ids)} joueurs')
     n_new = 0
-    while time.time() - T0 < BUDGET and not STOP['reason'] and R['players']:
-        i = R['cursor'] % len(R['players'])
-        puuid = R['players'][i]
-        R['cursor'] = i + 1
-        since = int(max(R['last'].get(puuid, 0), time.time() - LOOKBACK))
-        mids = get(reg, f'/lol/match/v5/matches/by-puuid/{puuid}/ids', {'type': 'ranked', 'startTime': since, 'count': 20})
-        if mids is None:
-            continue
-        R['last'][puuid] = int(time.time())
-        for mid in mids:
+
+    def take(mids):
+        # renvoie le nombre d'ids traités (moins que la liste si le temps est écoulé)
+        nonlocal n_new
+        for k, mid in enumerate(mids):
             if time.time() - T0 >= BUDGET or STOP['reason']:
-                break
+                return k
             with LOCK:
                 if mid in st['seen']:
                     continue
@@ -246,7 +245,35 @@ def run_region(st, region):
                 with LOCK:
                     if count_match(st, m):
                         n_new += 1
-    log(f'{region} : {n_new} nouvelles parties comptées')
+        return len(mids)
+
+    while time.time() - T0 < BUDGET and not STOP['reason'] and R['players']:
+        i = R['cursor'] % len(R['players'])
+        puuid = R['players'][i]
+        R['cursor'] = i + 1
+        since = int(max(R['last'].get(puuid, 0), time.time() - LOOKBACK))
+        mids = get(reg, f'/lol/match/v5/matches/by-puuid/{puuid}/ids', {'type': 'ranked', 'startTime': since, 'count': 20})
+        if mids is None:
+            continue
+        R['last'][puuid] = int(time.time())
+        take(mids)
+        # rattrapage de l'historique, une page par visite
+        b = BF.get(puuid)
+        if b == 0 or time.time() - T0 >= BUDGET or STOP['reason']:
+            continue
+        if not b:
+            b = BF[puuid] = [int(time.time()), 0]
+        floor = int(time.time() - BACKFILL_DAYS * 86400)
+        old = get(reg, f'/lol/match/v5/matches/by-puuid/{puuid}/ids',
+                  {'type': 'ranked', 'startTime': floor, 'endTime': b[0], 'start': b[1], 'count': 100})
+        if old is None:
+            continue
+        done = take(old)
+        b[1] += done
+        if done == len(old) and len(old) < 100:
+            BF[puuid] = 0
+    left = sum(1 for p in R['players'] if BF.get(p) != 0)
+    log(f'{region} : {n_new} nouvelles parties comptées (rattrapage restant : {left} joueurs)')
     return n_new
 
 
@@ -278,11 +305,13 @@ def write_out(st):
     patches = sorted({k.split('|')[0] for k in st['stats']}, key=lambda p: pver(p))
     for k in [k for k in st['stats'] if k.split('|')[0] in patches[:-KEEP_PATCHES]]:
         del st['stats'][k]
-    cutoff = time.time() - LOOKBACK - 86400
+    # une partie reste connue tant qu'un rattrapage peut encore la retrouver
+    cutoff = time.time() - (BACKFILL_DAYS + 1) * 86400
     st['seen'] = {k: v for k, v in st['seen'].items() if v >= cutoff}
     for R in st['regions'].values():
         keep = set(R['players'])
         R['last'] = {k: v for k, v in R['last'].items() if k in keep}
+        R['bf'] = {k: v for k, v in R.get('bf', {}).items() if k in keep}
     out = {'updated': int(time.time()), 'regions': REGIONS, 'stop': STOP['reason'],
            'patches': {p: {'n': s['n']} for p, s in st['stats'].items()}, 'stats': st['stats'], 'log': LOG[-20:]}
     tmp = OUT + '.tmp'
