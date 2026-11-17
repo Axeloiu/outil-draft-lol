@@ -2,7 +2,7 @@ name: Collecte des parties Master+
 
 on:
   schedule:
-    - cron: '7 */3 * * *' # filet de sécurité si la chaîne s'arrête (le cron GitHub est souvent en retard)
+    - cron: '7 * * * *'   # filet de sécurité si la chaîne s'arrête (le cron GitHub est souvent en retard)
   workflow_dispatch: {}    # bouton « Run workflow » pour lancer à la main
 
 permissions:
@@ -25,9 +25,24 @@ jobs:
 
       - name: Données déjà récoltées (branche data)
         run: |
-          git clone --depth 1 --branch data "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git" data || {
-            mkdir -p data && cd data && git init -q -b data && git remote add origin "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git"
-          }
+          URL="https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git"
+          set +e; git ls-remote --exit-code --heads "$URL" data >/dev/null; rc=$?; set -e
+          if [ $rc -eq 2 ]; then
+            # la branche n'existe pas encore : premier passage
+            mkdir -p data && cd data && git init -q -b data && git remote add origin "$URL"
+            echo "BASE=" >> "$GITHUB_ENV"
+          elif [ $rc -ne 0 ]; then
+            echo "branche data injoignable : arrêt sans rien écrire"; exit 1
+          else
+            # la branche existe : on ne repart JAMAIS de zéro (c'est ce qui a effacé les données le 16/11)
+            for i in 1 2 3 4 5; do git clone -q --depth 1 --branch data "$URL" data && break; rm -rf data; sleep 20; done
+            test -f data/state.json.gz || { echo "clone de la branche data impossible : arrêt sans rien écrire"; exit 1; }
+            echo "BASE=$(git -C data rev-parse HEAD)" >> "$GITHUB_ENV"
+          fi
+
+      - name: Récupération des données écrasées le 16/11 (une seule fois)
+        if: env.BASE != ''
+        run: python3 code/collector/recover.py data b3257a4e406510bf4c827f6164209fb2c21bb89d
 
       - name: Collecte (environ 50 minutes)
         env:
@@ -44,7 +59,7 @@ jobs:
           git add -A
           git commit -q -m "stats $(date -u +%Y-%m-%dT%H:%MZ)" --allow-empty
           git reset -q --soft $(git commit-tree HEAD^{tree} -m "stats $(date -u +%Y-%m-%dT%H:%MZ)")
-          git push -q -f origin HEAD:data
+          git push -q --force-with-lease=data:${BASE} origin HEAD:data
 
       # Chaîne continue : chaque passage lance le suivant (le cron seul saute souvent des heures).
       # Pas de relance si la clé est refusée. Pour tout arrêter : Actions > ce workflow > Disable workflow.
