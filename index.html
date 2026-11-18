@@ -582,7 +582,16 @@ const TI = { e: 0, p: 1, k: 2, o: 3, d: 4, f: 5, s: 6, w: 7, c: 8, h: 9, m: 10, 
 const ARCH = {
   engage: 'Engage / teamfight', pick: 'Pick', poke: 'Poke / siège', protect: 'Protéger le carry', dive: 'Dive', split: 'Split push (1-3-1)'
 };
-let OPT = { offPool: false };
+let OPT = { offPool: false, proOnly: true };
+// « Joué en pro » (option par défaut de l'onglet Compos) : un champion n'est proposé à un rôle que s'il y a été joué
+// au moins PRO_MIN_G fois dans les parties pros de l'année (Leaguepedia, ~6800 parties : en dessous, ce sont des picks
+// isolés, comme Qiyana mid ou Karthus ADC), et une compo n'est gardée que si son profil de dégâts (AD / AP / tanks)
+// apparaît dans au moins SHAPE_MIN compos pros sur ~13 500.
+const PRO_MIN_G = 10, SHAPE_MIN = 50;
+const proGamesAt = (c, r) => (PRO26.freq && PRO26.freq[r] && PRO26.freq[r][c.id]) || 0;
+const proOK = (c, r) => !OPT.proOnly || proGamesAt(c, r) >= PRO_MIN_G;
+const shapeKey = cs => { let a = 0, p = 0; cs.forEach(c => { if (c.d === 'AD') a++; else if (c.d === 'AP') p++; }); return a + '-' + p; };
+const shapeOK = cs => { const v = PROSHAPE.dmg[shapeKey(cs)]; return !!v && v[0] >= SHAPE_MIN; };
 
 // ===== Styles de jeu proposés dans l'onglet Compos =====
 // note de style calculée sur les profils (0 à 3) des 5 champions
@@ -736,10 +745,10 @@ function candidates(r, mine, arch, o) {
   const tg = S.target && BY[S.target.ids[ROLES.indexOf(r)]];
   if (tg && available(tg)) pin.push(tg);
   (p.want || []).forEach(id => { const c = BY[id]; if (c && available(c) && !pin.includes(c)) pin.push(c); });
-  const pool = p.pool.map(id => BY[id]).filter(c => c && available(c) && !pin.includes(c));
+  const pool = p.pool.map(id => BY[id]).filter(c => c && available(c) && !pin.includes(c) && proOK(c, r));
   let list = pin.concat(best(pool, Math.max(CAND_POOL - pin.length, 3)));
   // hors pool : champions joués à ce rôle (Master+ ou pros), présélectionnés sur leur force puis classés comme les autres
-  const metaOK = (c, minPr) => (viable(c, r) && share(c, r) >= 0.2 && pr(c, r) >= minPr) || proRole(c, r).pick >= 0.04;
+  const metaOK = (c, minPr) => OPT.proOnly ? proOK(c, r) : (viable(c, r) && share(c, r) >= 0.2 && pr(c, r) >= minPr) || proRole(c, r).pick >= 0.04;
   if (OPT.offPool || !pool.length) {
     const extra = CH.filter(c => available(c) && !inPool(c) && !list.includes(c) && metaOK(c, 0.015))
       .sort((a, b) => champVal(b, r) - champVal(a, r)).slice(0, 12);
@@ -749,7 +758,7 @@ function candidates(r, mine, arch, o) {
   // (hors pool seulement si l'option est cochée ou si le pool est vide)
   let fits = [];
   const addFit = (ok, n) => {
-    const fp = pool.filter(c => !list.includes(c) && !fits.includes(c) && ok(c, r));
+    const fp = pool.filter(c => !list.includes(c) && !fits.includes(c) && ok(c, r));  // (pool déjà filtré « joué en pro »)
     const fo = OPT.offPool || !pool.length ? CH.filter(c => available(c) && !inPool(c) && !list.includes(c) && !fits.includes(c) && ok(c, r) && metaOK(c, 0.01))
       .sort((a, b) => champVal(b, r) - champVal(a, r)).slice(0, 8) : [];
     fits = fits.concat(best(fp, n), best(fo, n));
@@ -779,9 +788,12 @@ function bestComps(limit = 5, o = {}) {
   const pairV = (i, a, j, b) => { const k = i + '|' + a.id + '|' + j + '|' + b.id; let v = PC.get(k); if (v == null) { const ri = ROLES[i], rj = ROLES[j]; v = mt * (K[1] * (fsPair('A', a, ri, b, rj) + fsPair('A', b, rj, a, ri)) / 2 + mlAlly(a, ri, b, rj)); PC.set(k, v); } return v; };
   const res = [];
   const cur = [];
+  // profil de dégâts jamais (ou presque) vu chez les pros : écarté, sauf si plus rien ne passe
+  const shapeOn = OPT.proOnly && !o.noShape; let shapeOut = 0;
   (function rec(i, used) {
     if (i === 5) {
       const cs = cur.map(x => x.c);
+      if (shapeOn && !shapeOK(cs)) { shapeOut++; return; }
       // cohérence (identité, plan) : calculée seulement quand elle sert, c'est l'étape la plus coûteuse
       const co = o.arch || (TG && !TG.style) ? coherence(cs, ens) : null;
       if (o.arch && co.id.main !== o.arch) return;
@@ -804,6 +816,7 @@ function bestComps(limit = 5, o = {}) {
       used.delete(x.c.id); cur.pop();
     }
   })(0, new Set());
+  if (shapeOn && !res.length && shapeOut) return bestComps(limit, { ...o, noShape: true });
   // Style demandé : on garde les compos qui l'incarnent le mieux (tiers supérieur) et le style compte dans le choix
   if (STY && res.length) {
     const v = res.map(x => x.ss), m = v.reduce((a, b) => a + b, 0) / v.length, sd = Math.sqrt(v.reduce((a, b) => a + (b - m) * (b - m), 0) / v.length) || 1;
@@ -1431,7 +1444,7 @@ const ROLE_FR1 = { T: 'top', J: 'jungle', M: 'mid', B: 'ADC', S: 'support' };
 let IDC = { k: null, v: null };
 function idealNow() {
   const d = D(); if (!d) return null;
-  const k = [d.fill.join(','), JSON.stringify(d.roles), S.side, S.mode, S.target ? S.target.ids.join(',') : '', S.team.map(t => t.pool.join('.') + ':' + JSON.stringify(t.comf || {})).join('|'), OPT.offPool, S.target ? S.target.style : ''].join('#');
+  const k = [d.fill.join(','), JSON.stringify(d.roles), S.side, S.mode, S.target ? S.target.ids.join(',') : '', S.team.map(t => t.pool.join('.') + ':' + JSON.stringify(t.comf || {})).join('|'), OPT.offPool, OPT.proOnly, S.target ? S.target.style : ''].join('#');
   if (IDC.k !== k) IDC = { k, v: bestComps(1, { target: true })[0] || null };
   return IDC.v;
 }
@@ -2598,12 +2611,14 @@ function renderComps() {
   let h = `<div class="ctrl"><div class="seg"><span>Style</span>${[['', 'Les plus fortes'], ...Object.entries(STYLES)].map(([k, l]) => `<button data-sty="${k}" class="${COMP_STYLE === k ? 'on' : ''}">${l}</button>`).join('')}</div></div>
     ${COMP_STYLE ? `<p class="note">${STYLE_TXT[COMP_STYLE]}</p>` : ''}
     <div class="ctrl"><label>Construire autour de <select id="clock"><option value="">personne en particulier</option>${S.team.map(p => `<optgroup label="${RL[p.role]}${p.name ? ' · ' + esc(p.name) : ''}">${p.pool.map(id => BY[id] ? `<option value="${p.role}|${id}" ${COMP_LOCK && COMP_LOCK.id === id && COMP_LOCK.r === p.role ? 'selected' : ''}>${esc(BY[id].n)}</option>` : '').join('')}</optgroup>`).join('')}</select></label>
-      <label class="chk"><input type="checkbox" id="offp" ${OPT.offPool ? 'checked' : ''}> Proposer aussi hors pool</label></div>
+      <label class="chk"><input type="checkbox" id="offp" ${OPT.offPool ? 'checked' : ''}> Proposer aussi hors pool</label>
+      <label class="chk" title="Champion joué au moins ${PRO_MIN_G} fois à ce rôle dans les parties pros de l’année, et profil de dégâts (AD / AP / tanks) vu dans au moins ${SHAPE_MIN} compos pros"><input type="checkbox" id="prook" ${OPT.proOnly ? 'checked' : ''}> Seulement ce qui se joue en pro</label></div>
+    ${proOutNote()}
     <details class="wants" ${anyWant ? 'open' : ''}><summary><b>Envies du jour</b> <span class="note">chacun coche ce qu’il a envie de jouer, les compos se construisent autour (partagé en direct)</span></summary>
       ${S.team.map((p, i) => `<div class="wrow"><span class="prole">${RL[p.role]}</span><span class="wname">${esc(p.name || '')}</span>${p.pool.map(id => { const c = BY[id]; if (!c) return ''; const on = p.want && p.want.includes(id); return `<button class="wch ${on ? 'sel' : ''}" data-want="${i},${id}">${img(c)}${esc(c.n)}${on ? ' ★' : ''}</button>`; }).join('')}</div>`).join('')}
       <label class="chk"><input type="checkbox" id="onlyw" ${COMP_ONLYWANT ? 'checked' : ''}> Seulement les envies (pour les joueurs qui en ont coché)</label></details>`;
   h += targetBox('comps');
-  if (!comps.length) h += COMP_STYLE ? `<p class="note">Pas de compo « ${STYLES[COMP_STYLE]} » avec ces réglages. Coche « Proposer aussi hors pool » ou change de style.</p>` : '<p class="note">Remplis au moins un champion par rôle dans l’onglet Équipe.</p>';
+  if (!comps.length) h += COMP_STYLE ? `<p class="note">Pas de compo « ${STYLES[COMP_STYLE]} » avec ces réglages. Coche « Proposer aussi hors pool »${OPT.proOnly ? ', décoche « Seulement ce qui se joue en pro »' : ''} ou change de style.</p>` : '<p class="note">Remplis au moins un champion par rôle dans l’onglet Équipe.</p>';
   else {
     h += comps.map((cp, k) => compCard(cp, k, true)).join('');
     h += `<div class="nbar">${comps.length >= COMP_N ? `<button id="cmore" class="on">Afficher 5 compos de plus</button>` : `<span class="note">${comps.length} compos différentes possibles avec ces réglages.</span>`}${COMP_N > 6 ? '<button id="cless" class="ghost">Revenir à 6</button>' : ''}</div>`;
@@ -2619,6 +2634,13 @@ function renderComps() {
   const tg = $('#tgo'); if (tg) tg.onclick = () => { TAB = 'draft'; render(); };
   const tc = $('#tclear'); if (tc) tc.onclick = () => { S.target = null; save(); IDC = { k: null, v: null }; renderComps(); };
   $('#offp').onchange = () => { OPT.offPool = $('#offp').checked; renderComps(); };
+  $('#prook').onchange = () => { OPT.proOnly = $('#prook').checked; IDC = { k: null, v: null }; renderComps(); };
+}
+// champions des pools laissés de côté par l'option « Seulement ce qui se joue en pro »
+function proOutNote() {
+  if (!OPT.proOnly) return '';
+  const out = S.team.map(p => p.pool.map(id => BY[id]).filter(c => c && !proOK(c, p.role)).map(c => `${c.n} ${RL[p.role]} (${proGamesAt(c, p.role)})`)).flat();
+  return out.length ? `<p class="note">Pas proposés car presque jamais joués à ce rôle chez les pros (parties sur un an) : ${out.map(esc).join(', ')}.</p>` : '';
 }
 
 // ----- Profils des champions (questionnaire pré-rempli) -----
