@@ -916,8 +916,12 @@ function gamePlan(cs, enemyM, styHint) {
   const et = ens.length ? traitsSum(ens) : null;
   const eid = et && ens.length >= 2 ? identity(et) : null;
   const lw = {}; ROLES.forEach((r, i) => lw[r] = laneWr(r, cs[i], enemyM && enemyM[r]));
-  const botS = lw.adc != null && lw.sup != null ? (lw.adc + lw.sup) / 2 : null;
-  const topS = lw.top;
+  // lw = winrate de PARTIE estimé avec ce duel (pas l'état de la lane). Pour le côté fort (début de partie), un champion
+  // qui monte surtout en puissance plus tard ne compte pas comme un avantage de lane.
+  const cv = r => cs[ROLES.indexOf(r)] ? cs[ROLES.indexOf(r)].tr[TI.c] : 1;
+  const lwE = r => lw[r] == null ? null : cv(r) === 2 ? 0.5 : lw[r];
+  const botS = lwE('adc') != null && lwE('sup') != null ? (lwE('adc') + lwE('sup')) / 2 : null;
+  const topS = lwE('top');
   let strong = null;
   if (botS != null && topS != null) strong = botS - topS > 0.015 ? 'bot' : topS - botS > 0.015 ? 'top' : null;
   else if (botS != null) strong = botS >= 0.51 ? 'bot' : null;
@@ -925,6 +929,7 @@ function gamePlan(cs, enemyM, styHint) {
   const early = t.c < 0.9, late = t.c > 1.3;
   const tr0 = (r, k) => cs[ROLES.indexOf(r)] ? cs[ROLES.indexOf(r)].tr[TI[k]] : 0;
   const vsAss = et && et.ass >= 2, vsEngage = et && et.e >= 6, vsPoke = et && et.o >= 7, vsSplit = et && (enemyM.top && enemyM.top.tr[TI.s] >= 3);
+  const vsEarly = et && ens.length >= 3 && et.c <= 0.75 && t.c >= 0.9;
 
   const RD = readComp(ens), F = RD.f, SELF = readComp(cs);
   const lines = [];
@@ -932,6 +937,9 @@ function gamePlan(cs, enemyM, styHint) {
   const isTg = S.target && cs.every((c, k) => c && c.id === S.target.ids[k]);
   const sty = styHint || (isTg && S.target.style) || (typeof styleTags === 'function' && cs.every(Boolean) ? styleTags(cs)[0] : null) || 'teamfight';
   const carry = cs.filter(Boolean).slice().sort((a, b) => carryPow(b) - carryPow(a))[0];
+  // celui que le support et la compo protègent : le carry à distance le plus fort (le moins mobile s'ils plongent)
+  const ranged = cs.filter(c => c && c.d !== 'T' && tv(c, 'g') >= 2);
+  const protect = ranged.length ? ranged.slice().sort((a, b) => (vsAss || vsEngage ? tv(a, 'm') - tv(b, 'm') : 0) || carryPow(b) - carryPow(a))[0] : carry;
   const OBJ = {
     teamfight: 'Teamfight : jouer à 5 autour des objectifs. Être premier sur la zone avec la vision (posée 60 à 90 s avant le spawn, back au moins 60 s avant), puis lancer le fight quand l’engage est prêt. Après un nashor, pousser ensemble (4-1 si le top tient sa side).',
     poke: 'Poke : prendre la zone de l’objectif en premier, puis la tenir. Une compo de poke est très forte pour garder une position déjà prise, mauvaise pour en prendre une. On use avant l’objectif, on n’engage jamais à pleine vie, et après un dragon on recule plutôt que d’aller sous leur tour.',
@@ -943,6 +951,7 @@ function gamePlan(cs, enemyM, styHint) {
     solo: `Solo carry : tout autour de ${carry ? carry.n : 'notre carry'}. C’est avec lui qu’on joue après la lane, le jungle couvre son côté et les objectifs suivent ses objets.`
   };
   let obj = OBJ[sty] || OBJ.teamfight;
+  if (vsEarly) obj += ' Leur compo est plus forte tôt que la nôtre : le temps joue pour nous. On échange les objectifs plutôt que de se battre avant 20 minutes.';
   if (early && sty !== 'early') obj += ' Compo forte tôt : prendre de l’avance avant 20 minutes.';
   else if (late && sty !== 'scaling') obj += ' Compo qui scale : jouer la sécurité tôt et viser soul, nashor et ancestral.';
   if (F.nowave && t.u + t.w >= 12) obj += ' Leur compo dépush mal : on étouffe leurs vagues et on arrive sur chaque objectif avec les lanes poussées.';
@@ -957,18 +966,20 @@ function gamePlan(cs, enemyM, styHint) {
     strong === 'top' ? 'Côté fort : top. Le jungle fait son clear du bot vers le top, joue les grubs (8:00) puis le herald (15:00), et répond en cross map si l’adversaire prend le dragon. La bot est weak side : crash la wave 3 et back, le premier gank adverse arrive vers la wave 4.' :
     focus === 'safe' ? 'Pas de côté fort net : full clear, tracker le jungle adverse et ne prendre que les objectifs gratuits, en cross map de l’adversaire.' :
     'Pas de côté fort net : full clear et tracking ; le premier dragon (5:00) reste la priorité, il vaut en général plus que les grubs au patch actuel. La lane qui a la prio bouge en premier.';
-  const focusTxt2 = focusTxt + ' En jeu, le côté fort devient celui de la lane qui prend l’avantage ; si c’est un adversaire, on le laisse et on joue de l’autre côté.';
+  const focusTxt2 = focusTxt + (vsEarly ? ' Contre leur compo forte tôt : on ne conteste un objectif que si nos lanes de ce côté ont la prio, sinon on prend l’autre en cross map.' : '') + ' En jeu, le côté fort devient celui de la lane qui prend l’avantage ; si c’est un adversaire, on le laisse et on joue de l’autre côté.';
 
   const role = r => cs[ROLES.indexOf(r)];
   const tr = (r, k) => role(r) ? role(r).tr[TI[k]] : 0;
-  const ln = r => lw[r] == null ? '' : ` (${pct(lw[r])} estimé contre ${enemyM[r].n})`;
+  const ln = r => lw[r] == null ? '' : ` (contre ${enemyM[r].n} : ${pct(lw[r])} de victoires estimées sur la partie)`;
 
   // Top (guide top)
   {
     const c = role('top'); let s;
-    if (lw.top != null && lw.top < 0.48) s = `Lane difficile${ln('top')} : ne conteste pas la prio, farme sous ta tour et ne meurs pas.`;
-    else if (lw.top != null && lw.top > 0.52) s = `Lane favorable${ln('top')} : prends la prio dès l’arrivée des sbires et transforme-la en xp, plates ou roam.`;
-    else s = `Lane équilibrée${ln('top')} : joue pour la prio sans sur-étendre.`;
+    if (lw.top != null && lw.top < 0.48) s = `Duel difficile${ln('top')} : ne conteste pas la prio, farme sous ta tour et ne meurs pas.`;
+    else if (cv('top') === 2) s = `Champion qui monte en puissance${ln('top')} : farme et ne force pas la prio, ton moment vient après tes objets.`;
+    else if (lw.top != null && lw.top > 0.52 && cv('top') === 0) s = `Duel qui te favorise et champion fort tôt${ln('top')} : prends la prio dès l’arrivée des sbires et transforme-la en xp, plates ou roam.`;
+    else if (lw.top != null && lw.top > 0.52) s = `Duel qui te favorise sur la partie${ln('top')} : joue pour la prio sans sur-étendre.`;
+    else s = `Duel équilibré${ln('top')} : joue pour la prio sans sur-étendre.`;
     if (strong === 'bot') s += ' Weak side : garde ton TP pour le dragon (5:00), avec ta wave poussée avant.';
     else if (strong === 'top') s += ' Côté fort : pousse ta wave avant les grubs (8:00) pour bouger en premier avec ton jungle.';
     else s += ' TP prêt pour le dragon (5:00) si ta wave est poussée.';
@@ -982,6 +993,7 @@ function gamePlan(cs, enemyM, styHint) {
     s = strong === 'bot' ? 'Clear du top vers le bot, gank ou contre-gank la bot, puis dragon à 5:00 avec le support et le mid.' :
       strong === 'top' ? 'Clear du bot vers le top, joue autour du top : grubs à 8:00 puis herald à 15:00.' :
       'Full clear (vers 3:15), tracker le jungle adverse et contester seulement les objectifs où nos lanes ont la prio.';
+    if (vsEarly && strong) s += ` Leur jungle est plus fort tôt : ne force pas ${strong === 'top' ? 'les grubs' : 'le dragon'} sans la prio de tes lanes, et prends l’autre objectif s’ils y vont en premier.`;
     s += ' Back au moins 60 s avant chaque objectif pour être premier sur la vision.';
     if (tr('jgl', 'e') >= 2) s += ' C’est toi qui lances les fights : attends que le mid et le bot puissent suivre.';
     if (tr('jgl', 'd') >= 3) s += ' Cherche les carries isolés plutôt que les fights frontaux.';
@@ -992,10 +1004,11 @@ function gamePlan(cs, enemyM, styHint) {
   // Mid (guide mid)
   {
     const c = role('mid'); let s;
-    s = lw.mid != null && lw.mid > 0.51 ? `Prends la prio${ln('mid')} : ta wave pousse vers leur tour, tu bouges en premier sur chaque objectif.` :
-      lw.mid != null && lw.mid < 0.49 ? `Matchup difficile${ln('mid')} : farme, clear et ne bouge qu’avec ta wave poussée.` :
+    s = lw.mid != null && lw.mid < 0.49 ? `Matchup difficile${ln('mid')} : farme, clear et ne bouge qu’avec ta wave poussée.` :
+      cv('mid') === 2 ? `Champion qui monte en puissance${ln('mid')} : clear tes vagues et farme, ne force pas la prio avant tes objets ; bouge sur un objectif seulement avec ta wave poussée.` :
+      lw.mid != null && lw.mid > 0.51 ? `Prends la prio${ln('mid')} : ta wave pousse vers leur tour, tu bouges en premier sur chaque objectif.` :
       `Garde la prio${ln('mid')} pour décaler en premier.`;
-    s += strong === 'top' ? ' Arrive en avance aux grubs (8:00) avec la vision.' : ' Back vers 4:30 et TP pour le dragon de 5:00.';
+    s += cv('mid') === 2 ? '' : strong === 'top' ? ' Arrive en avance aux grubs (8:00) avec la vision.' : ' Back vers 4:30 et TP pour le dragon de 5:00.';
     s += ' En mid game, joue du côté fort de la map, avec ton équipe.';
     if (tr('mid', 'o') >= 2) s += ' Poke avant d’engager les fights d’objectif.';
     if (tr('mid', 'd') >= 3) s += ' Roame sur les lanes poussées et finis les cibles isolées.';
@@ -1008,7 +1021,7 @@ function gamePlan(cs, enemyM, styHint) {
     if (tr('adc', 'h')) s = 'Hypercarry : farme en sécurité (8 sbires par minute), reste derrière la frontline et ne facecheck jamais.';
     else if (t.c < 0.9 || (c && c.tr[TI.c] === 0)) s = 'ADC de lane : joue agressif avec ton support pour les plates et la prio du dragon.';
     else s = 'Farme et prends des trades courts, place-toi pour durer en teamfight.';
-    if (lw.adc != null) s += ` Lane${ln('adc')}.`;
+    if (lw.adc != null) s += ` Duel${ln('adc')}.`;
     s += strong === 'bot' ? ' Côté fort : crash la wave 3 pour piéger, pousse 30 à 45 s avant le dragon.' : strong === 'top' ? ' Weak side : crash la wave 3 et back avant le premier gank adverse.' : '';
     s += ' Vers 14:00, swap au mid.';
     if (vsAss) s += ' Contre leurs assassins, reste collé au support et garde le flash pour eux.';
@@ -1021,7 +1034,7 @@ function gamePlan(cs, enemyM, styHint) {
     else if (tr('sup', 'e') >= 2) s = 'Engage : lance les fights quand le jungle et le mid peuvent suivre, cherche les picks avec la vision.';
     else if (tr('sup', 'p') >= 2) s = 'Protection : garde tes sorts pour ton carry plutôt que pour engager.';
     else s = 'Poke : use la bot lane à chaque last hit adverse et garde un sort de défense.';
-    s += ` Vision 60 à 90 s avant chaque objectif. Après la lane, joue avec ${carry ? carry.n : 'celui qui porte la game'}.`;
+    s += ` Vision 60 à 90 s avant chaque objectif. Après la lane, joue avec ${protect ? protect.n : 'celui qui porte la game'}${(vsEngage || vsAss) && protect && tv(protect, 'm') === 0 ? ' : peu mobile, c’est lui que leur engage va viser' : ''}.`;
     lines.push(['sup', c, s]);
   }
   const addL = (r, txt) => { const l = lines.find(x => x[0] === r); if (l) l[2] += ' ' + txt; };
@@ -1030,7 +1043,19 @@ function gamePlan(cs, enemyM, styHint) {
     addL('jgl', 'Lancer les objectifs juste après que top et mid ont poussé : ils doivent choisir entre la vague et l’objectif.');
   }
   if (F.imm) { ['jgl', 'sup', 'mid'].forEach(r => { if (tr(r, 'k') >= 2 || tr(r, 'e') >= 2) addL(r, `Cible prioritaire : ${nm(F.imm.who)}, peu mobiles.`); }); }
-  if (F.hyper) addL('jgl', `Ralentir ${nm(F.hyper.who)} : gank ou dive sa lane tôt, il ne doit pas farmer tranquille.`);
+  // Contre beaucoup d'engage : qui garde quoi (rôles déduits des profils de nos champions)
+  if (F.eng || vsEngage) {
+    const who = F.eng && F.eng.who && F.eng.who.length ? nm(F.eng.who) : 'leur engage';
+    const fightsFirst = ['poke', 'f2b', 'scaling', 'solo'].includes(sty) || t.o >= 6;
+    ROLES.forEach((r, i) => {
+      const c = cs[i]; if (!c) return;
+      const rangedC = c.d !== 'T' && tv(c, 'g') >= 2, melee = tv(c, 'g') === 0;
+      if (rangedC && tv(c, 'm') === 0) addL(r, `Contre ${who} : place-toi derrière, hors de portée de leur engage, et garde ton flash pour lui.`);
+      else if ((tv(c, 'p') >= 2 || tv(c, 'e') >= 2) && !melee) addL(r, `Contre ${who} : garde ton contrôle pour celui qui engage sur nos carries plutôt que pour ouvrir le combat.`);
+      else if (melee && fightsFirst && (tv(c, 'e') >= 2 || tv(c, 'd') >= 2) && c !== protect) addL(r, `Contre ${who} : ne lance pas le combat le premier ; reste près de ${protect ? protect.n : 'nos carries'} et punis celui qui engage sur eux.`);
+    });
+  }
+  if (F.hyper) addL('jgl', F.hyper.who.length > 1 ? `Ralentir ${nm(F.hyper.who)} : gank ou dive leurs lanes tôt, ils ne doivent pas farmer tranquilles.` : `Ralentir ${nm(F.hyper.who)} : gank ou dive sa lane tôt, il ne doit pas farmer tranquille.`);
   if (F.ad) ROLES.forEach(r => { if (tr(r, 'f') >= 2) addL(r, 'Armure en premier : leurs dégâts sont presque tous AD.'); });
   if (F.ap) ROLES.forEach(r => { if (tr(r, 'f') >= 2) addL(r, 'Résistance magique en premier : leurs dégâts sont presque tous AP.'); });
   if (F.split && vsSplit) addL('top', `${enemyM.top.n} va split : le tenir en side ou appeler l’aide avant de mourir.`);
@@ -1117,7 +1142,7 @@ function readComp(es) {
   if (imm.length >= 2) add('imm', 'weak', `Carries peu mobiles (${nm(imm)})`, 'Chercher les picks sur eux avec la vision, flanquer en teamfight : un engage qui les touche gagne le fight.', imm);
   const mel = es.filter(c => tv(c, 'g') === 0);
   if (n >= 4 && mel.length >= n - 1) add('melee', 'weak', `Compo de mêlée (${nm(mel)})`, 'Kiter : reculer en tapant, peel sur la backline, ne pas les laisser coller.', mel);
-  if (t.c <= 0.75 && n >= 3) add('early', 'threat', 'Compo early', 'Elle doit gagner avant 20 min : jouer safe, échanger les objectifs, ne pas donner de kills ; le temps joue pour nous.');
+  if (t.c <= 0.75 && n >= 3) add('early', 'threat', 'Compo early', 'Elle doit gagner avant 20 min : jouer safe, échanger les objectifs, ne pas donner de kills.');
   if (t.c >= 1.5 && n >= 3) add('late', 'weak', 'Compo qui scale', 'La punir avant 20 min : invades, dives, grubs et dragons tôt.');
   const sp = es.filter(c => tv(c, 's') >= 3);
   if (sp.length) add('split', 'threat', `Split push (${nm(sp)})`, 'Désigner qui défend la side lane, ou forcer l’objectif à 4 contre 4 quand il est loin.', sp);
