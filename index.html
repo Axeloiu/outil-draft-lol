@@ -149,6 +149,11 @@ details.ideal summary{cursor:pointer}
 .tch span{display:flex;flex-direction:column;min-width:0}.tch small{color:var(--mute);font-size:11px}.tch b{font-size:12.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .tch.gone{opacity:.45}.tch.gone b{text-decoration:line-through}.tch.ok{outline:1px solid var(--ok)}
 .cplan{margin-top:6px}.cplan summary{color:var(--txt)}
+.frise{margin:8px 0 10px;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--panel2)}
+.frise svg{width:100%;height:auto;display:block}
+.frise .note{margin:2px 0 0}
+.frl{margin:4px 0 0;padding-left:4px;list-style:none;font-size:12.5px}.frl li{margin:2px 0}.frl li b{display:inline-block;min-width:38px}
+.frl li.fr-top b{color:var(--blue)}.frl li.fr-bot b{color:var(--gold)}.frl li.next{background:rgba(239,68,68,.12);border-radius:4px}.frl li.past{opacity:.55}
 .score-box{border:1px solid var(--gold);border-radius:8px;padding:10px;margin:10px 0}
 .sb-top{display:grid;grid-template-columns:150px 1fr 150px;gap:10px;align-items:center;margin-bottom:8px}
 .sb-team{display:flex;flex-direction:column;align-items:center;background:var(--panel2);border-radius:8px;padding:8px}
@@ -1064,7 +1069,8 @@ function gamePlan(cs, enemyM, styHint) {
   if (eid) threats.push(`Leur compo ressemble à : ${ARCH[eid.main]}.`);
   const weak = RD.list.map(k => F[k]);
   const self = SELF.list.filter(k => ['ad', 'ap', 'nowave', 'nofront', 'imm', 'noeng'].includes(k)).map(k => SELF.f[k]);
-  return { id, t, obj, focusTxt: focusTxt2, sty, lines, threats, strong, weak, self };
+  const tl = planTimeline({ strong, focus, vsEarly, early, late, sty, F, cs, enemyM: enemyM || {}, t, et });
+  return { id, t, obj, focusTxt: focusTxt2, sty, lines, threats, strong, weak, self, tl };
 }
 
 // ===== Règles tirées des guides par rôle d'Axel (Kazewa, Skill Capped, Coach Rogue, Coach K, Shodesu, Mysterias, Chreak) =====
@@ -1144,6 +1150,56 @@ function guideLines(cs, E, addL, protect) {
   if (jg && pit.length) addL('jgl', `${pit.join(', ')} peut te sortir du pit du nashor : vision et position avant de le lancer.`);
   if (jg && solo.length) addL('jgl', `${solo.join(', ')} peut faire le nashor seul : garde de la vision sur le pit.`);
   if (jg) addL('jgl', 'Héraut : sur la première tour mid.');
+}
+
+// ===== Frise de la partie (0 à 20:00) : vagues canon, objectifs, et ce que NOTRE compo vise à chaque moment =====
+// Horaires saison 16 (patch 26.x) : vagues sorties de base à 0:30 puis toutes les 30 s, un canon toutes les 3 vagues
+// (toutes les 2 après 15:00) ; carapateur 2:55 ; dragon 5:00 (revient 5 min après) ; larves 8:00 (disparaissent 14:45) ;
+// héraut 15:00 (disparaît 19:45) ; nashor 20:00. Le choix dragon / larves / cross map suit le côté fort du plan de jeu.
+function planTimeline(o) {
+  const ev = [], add = (t, k, short, txt, side) => ev.push({ t, k, short, txt, side: side || null });
+  for (let t = 90; t <= 900; t += 90) add(t, 'wave', '', 'vague canon (sortie de base)');
+  for (let t = 960; t <= 1200; t += 60) add(t, 'wave', '', 'vague canon (sortie de base)');
+  const cs = o.cs, C = r => cs[ROLES.indexOf(r)];
+  const drake = o.focus === 'drake' && !o.vsEarly, grubs = o.strong === 'top' && !o.vsEarly, safe = o.vsEarly || o.focus === 'safe';
+  const midLate = C('mid') && tv(C('mid'), 'c') === 2;
+  // ouverture
+  add(55, 'act', 'Buffs', 'Les buffs apparaissent : full clear ' + (o.strong === 'bot' ? 'du top vers le bot' : o.strong === 'top' ? 'du bot vers le top' : 'du côté le plus sûr') + ', fin vers 3:15.', null);
+  add(155, 'act', 'Ward', 'Mid : ward aux corbins ou au buisson du pixel ; support : ward sur la faelight du pixel (2:10 à 2:30).', 'mid');
+  add(175, 'obj', 'Crabe', 'Carapateur (2:55) : ' + (safe ? 'seulement avec la prio des lanes de ce côté, sinon on ne le conteste pas.' : `du côté ${o.strong === 'top' ? 'top' : o.strong === 'bot' ? 'bot' : 'où nos lanes ont la prio'} : la lane qui a la prio bouge en premier.`), o.strong === 'top' ? 'top' : o.strong === 'bot' ? 'bot' : null);
+  add(205, 'act', 'Gank ?', 'Après le carapateur, les junglers ont 25 à 30 s libres avant leurs camps : moment le plus probable d’un gank.', null);
+  // premier dragon
+  if (drake) {
+    add(210, 'vis', 'Vision', 'Vision du dragon (3:30 à 4:00), jungle déjà backé.', 'bot');
+    add(260, 'act', 'Push bot', 'Bot : pousser la wave 30 à 45 s avant le dragon ; mid : back vers 4:30 et TP pour 5:00' + (midLate ? ' si ta wave le permet.' : '.'), 'bot');
+    add(300, 'obj', 'Dragon', 'Dragon (5:00) : on le joue avec bot, mid et jungle. Le top garde son TP pour ce fight.', 'bot');
+  } else if (safe) {
+    add(300, 'obj', 'Dragon', 'Dragon (5:00) : seulement si nos lanes bot et mid ont la prio. Sinon cross map : camps et plates du côté top pendant qu’ils le prennent.', 'top');
+  } else {
+    add(260, 'act', 'Prio top', 'Top et jungle : préparer le côté top ; si l’adversaire va au dragon, on prend les camps adverses du haut.', 'top');
+    add(300, 'obj', 'Dragon', 'Dragon (5:00) : on le cède si l’adversaire y va avec la prio, et on répond en cross map (camps du haut, plates top).', 'top');
+  }
+  // larves
+  if (grubs) {
+    add(390, 'vis', 'Vision', 'Vision des larves (6:30 à 7:00) ; le top pousse sa wave avant 8:00.', 'top');
+    add(480, 'obj', 'Larves', 'Larves (8:00, une seule vague) : on les joue avec top, jungle et mid.', 'top');
+  } else {
+    add(480, 'obj', 'Larves', drake ? 'Larves (8:00) : cédées si l’adversaire y va ; on répond par les plates bot ou le dragon suivant.' : 'Larves (8:00) : seulement avec la prio top et mid, sinon on prend l’autre côté.', drake ? 'bot' : null);
+  }
+  add(600, 'obj', 'Dragon 2', 'Dragon suivant vers 10:00 s’il a été pris à 5:00 (il revient 5 minutes après).', 'bot');
+  if (o.early) add(390, 'act', 'Avance', 'Compo forte tôt : entre les objectifs, invades et plates ; prendre l’avance avant 14:00.', null);
+  add(840, 'act', '14:00', 'Fin de la phase de lane (quêtes) : l’ADC passe au mid, le top commence la side lane ; les larves disparaissent à 14:45.', null);
+  add(810, 'vis', 'Vision', 'Vision du héraut (13:30 à 14:00).', 'top');
+  add(900, 'obj', 'Héraut', 'Héraut (15:00, une fois) : sur la première tour mid.' + (safe && !o.late ? ' S’ils sont en avance, on le laisse et on prend le dragon ou des tours en face.' : ''), 'top');
+  // nashor
+  add(1110, 'vis', 'Vision', 'Pousser les side waves puis vision du nashor (18:30 à 19:00), ward profonde vers 18:00.', null);
+  const nash = o.sty === 'split' ? 'side bot à partir de 20:00 ; si plus de deux adversaires viennent sur lui, on lance le nashor.' :
+    o.sty === 's131' ? 'deux side lanes poussent, trois tiennent le mid ; le nashor se prend quand ils doivent répondre aux sides.' :
+    o.late || o.sty === 'scaling' ? 'c’est votre objectif clé : arriver premiers avec la vision et le prendre après un fight gagné ou un pick.' :
+    o.early || o.sty === 'early' ? 'le prendre dès qu’un fight est gagné ou que leur jungle est mort, pour finir avant 25 minutes.' :
+    'après un fight gagné, un pick sur leur jungle, ou quand ils doivent répondre aux side waves.';
+  add(1200, 'obj', 'Nashor', 'Nashor (20:00) : ' + nash, null);
+  return ev.sort((a, b) => a.t - b.t);
 }
 
 // ===== Profils des champions, lecture d'une compo et adéquation d'un pick à toute la partie =====
@@ -2103,7 +2159,7 @@ const NUMW = { un: '1', deux: '2', trois: '3', quatre: '4', cinq: '5', one: '1',
 // --- État : partagé (adversaires, chronos, horloge, haste) et local (réglages) ---
 var IG = { enemies: {}, allies: {}, timers: {}, clock: null, haste: {}, rev: 0 };
 // sections dépliées de l'onglet (gardées d'un rendu à l'autre : l'onglet se redessine à chaque sort annoncé)
-var IG_OPEN = { items: true, champs: false, nick: false };
+var IG_OPEN = { items: true, champs: false, nick: false, frise: true };
 var IGL = { delay: 3, voice: true, vol: 0.9, nick: '', mic: false };
 try { Object.assign(IGL, JSON.parse(localStorage.getItem('draftTool.ig') || '{}')); } catch (e) { }
 IGL.mic = false;
@@ -2412,7 +2468,9 @@ function renderIngame() {
   ${(() => { const al = igAllies(), sorted = CH.slice().sort((a, b) => a.n.localeCompare(b.n));
     const row = (kind, cur, man, lab) => `<div class="igen"><b style="min-width:90px">${lab}</b>${ROLES.map(r => `<label>${RL[r]} <select data-${kind}="${r}"><option value="">${cur[r] && !man[r] ? esc(cur[r].n) + ' (draft)' : '— draft —'}</option>${sorted.map(c => `<option value="${c.id}" ${man[r] === c.id ? 'selected' : ''}>${esc(c.n)}</option>`).join('')}</select></label>`).join('')}</div>`;
     return `<details class="cplan" id="igchamps" ${IG_OPEN.champs ? 'open' : ''}><summary><b>Champions de la partie</b> (repris de la dernière draft, corrigeables)</summary>${row('al', al, IG.allies || {}, 'Nous')}${row('en', en, IG.enemies || {}, 'Adversaires')}<div class="igen"><button id="igfromdraft" class="ghost">Reprendre la draft</button></div></details>`; })()}
-  <details class="cplan" id="ignickd" ${IG_OPEN.nick ? 'open' : ''}><summary><b>Surnoms</b> (une ligne par champion : <code>Kha'Zix: kaz, kha</code>)</summary><textarea id="ignick" rows="4" style="width:100%">${esc(IGL.nick || '')}</textarea>${(() => { const L = Object.entries(IGL.learn || {}).map(([c, ws]) => `${c} : ${ws.join(', ')}`).concat(Object.entries(IGL.learnSp || {}).map(([w, sp]) => `${w} = ${SPELLS[sp] ? SPELLS[sp].n : sp}`)); return L.length ? `<p class="note">Mots appris : ${esc(L.join(' · '))} <button class="ghost small" id="igunlearn">Oublier</button></p>` : ''; })()}<p class="note">Quand une phrase dite au micro n’est pas comprise, clique sur le bon champion (ou le bon sort) sous la barre de commande : l’outil retient le mot pour la suite. Commandes reconnues : sort puis cible ou l’inverse (« no flash mid », « mid no flash », « no tp Diana »), « annule Diana », « annule flash mid », « go » à 0:00. Sorts : flash, tp, smite (« no smite » seul vise le jungler), ignite (ou embrasement), heal, barrière, exhaust, cleanse, ghost. Temps de recharge (patch 26.21) : Flash et TP 300 s, TP déchaîné après 10:00 de 330 à 240 s selon le niveau (estimé depuis l’horloge), Heal, Exhaust, Cleanse, Ghost 240 s, Ignite et Barrière 180 s, Smite : 2 charges, une charge revient toutes les 90 s (le chrono part quand il n’en a plus) ; haste : Cosmic Insight 18, Lucidité 10, Lucidité pourpre 20.</p></details>`;
+  <details class="cplan" id="ignickd" ${IG_OPEN.nick ? 'open' : ''}><summary><b>Surnoms</b> (une ligne par champion : <code>Kha'Zix: kaz, kha</code>)</summary><textarea id="ignick" rows="4" style="width:100%">${esc(IGL.nick || '')}</textarea>${(() => { const L = Object.entries(IGL.learn || {}).map(([c, ws]) => `${c} : ${ws.join(', ')}`).concat(Object.entries(IGL.learnSp || {}).map(([w, sp]) => `${w} = ${SPELLS[sp] ? SPELLS[sp].n : sp}`)); return L.length ? `<p class="note">Mots appris : ${esc(L.join(' · '))} <button class="ghost small" id="igunlearn">Oublier</button></p>` : ''; })()}<p class="note">Quand une phrase dite au micro n’est pas comprise, clique sur le bon champion (ou le bon sort) sous la barre de commande : l’outil retient le mot pour la suite. Commandes reconnues : sort puis cible ou l’inverse (« no flash mid », « mid no flash », « no tp Diana »), « annule Diana », « annule flash mid », « go » à 0:00. Sorts : flash, tp, smite (« no smite » seul vise le jungler), ignite (ou embrasement), heal, barrière, exhaust, cleanse, ghost. Temps de recharge (patch 26.21) : Flash et TP 300 s, TP déchaîné après 10:00 de 330 à 240 s selon le niveau (estimé depuis l’horloge), Heal, Exhaust, Cleanse, Ghost 240 s, Ignite et Barrière 180 s, Smite : 2 charges, une charge revient toutes les 90 s (le chrono part quand il n’en a plus) ; haste : Cosmic Insight 18, Lucidité 10, Lucidité pourpre 20.</p></details>
+  ${(() => { const al = igAllies(); if (Object.keys(al).length < 5) return ''; const plan = gamePlan(ROLES.map(r => al[r]), en);
+    return `<details class="cplan" id="igfrd" ${IG_OPEN.frise ? 'open' : ''}><summary><b>Frise de la partie</b> <span class="note">· ${esc(STYLES[plan.sty] || '')} · ${plan.strong === 'bot' ? 'côté fort bot : dragons' : plan.strong === 'top' ? 'côté fort top : larves et héraut' : 'pas de côté fort net'}</span></summary>${friseHtml(plan.tl, g == null ? 0 : g, 'igfr')}</details>`; })()}`;
   $('#ingame').innerHTML = h;
   bindIngame();
 }
@@ -2426,6 +2484,11 @@ function renderIngameSoft() {
 function tickIngame() {
   const now = nowS(), g = gameSec(now);
   const ck = document.getElementById('igclk'); if (ck) ck.textContent = g == null ? '--:--' : mmss(g);
+  // frise : curseur du temps de jeu, prochain moment surligné
+  const cur = document.getElementById('igfr-cur');
+  if (cur) { const x = frX(Math.max(0, Math.min(FR_MAX, g || 0))); cur.setAttribute('x1', x); cur.setAttribute('x2', x);
+    let next = null; document.querySelectorAll('#igfr .frl li').forEach(li => { const t = +li.dataset.t; const past = g != null && t < g; li.classList.toggle('past', past); li.classList.remove('next'); if (!past && !next) next = li; });
+    if (next && g != null) next.classList.add('next'); }
   document.querySelectorAll('.igt[data-k]').forEach(b => { const t = IG.timers[b.dataset.k]; if (!t) return; const rem = (t.end - now) / 1000; b.classList.toggle('ready', rem <= 0); b.classList.toggle('soon', rem > 0 && rem <= 30); const cd = b.querySelector('.cd'); if (cd) cd.textContent = rem <= 0 ? 'DISPO' : mmss(rem); });
 }
 function igLine() {
@@ -2451,7 +2514,7 @@ function bindIngame() {
   document.querySelectorAll('[data-en]').forEach(s => s.onchange = () => igMutate(g => { g.enemies = Object.assign({}, g.enemies); if (s.value) g.enemies[s.dataset.en] = +s.value; else delete g.enemies[s.dataset.en]; }));
   document.querySelectorAll('[data-al]').forEach(s => s.onchange = () => igMutate(g => { g.allies = Object.assign({}, g.allies); if (s.value) g.allies[s.dataset.al] = +s.value; else delete g.allies[s.dataset.al]; }));
   const fd = $('#igfromdraft'); if (fd) fd.onclick = () => igMutate(g => { g.enemies = {}; g.allies = {}; });
-  [['igitems', 'items'], ['igchamps', 'champs'], ['ignickd', 'nick']].forEach(([id, k]) => { const d = document.getElementById(id); if (d) d.ontoggle = () => { IG_OPEN[k] = d.open; }; });
+  [['igitems', 'items'], ['igchamps', 'champs'], ['ignickd', 'nick'], ['igfrd', 'frise']].forEach(([id, k]) => { const d = document.getElementById(id); if (d) d.ontoggle = () => { IG_OPEN[k] = d.open; }; });
   const nk = $('#ignick'); if (nk) nk.onchange = () => { IGL.nick = nk.value; saveIGL(); };
   document.querySelectorAll('[data-lch]').forEach(b => b.onclick = () => { const [k, id] = b.dataset.lch.split('|'); igLearn(+k, 'champ', +id); });
   document.querySelectorAll('[data-lsp]').forEach(b => b.onclick = () => { const [k, sp] = b.dataset.lsp.split('|'); igLearn(+k, 'spell', sp); });
@@ -2634,6 +2697,36 @@ function renderTeam() {
   });
 }
 
+// ----- Frise de la partie (0 à 20:00) -----
+const FR_MAX = 1230, frX = t => 24 + t / FR_MAX * 952;
+const frT = t => `${Math.floor(t / 60)}:${String(t % 60).padStart(2, '0')}`;
+function friseHtml(tl, now, id) {
+  if (!tl || !tl.length) return '';
+  const col = s => s === 'top' ? 'var(--blue)' : s === 'bot' ? 'var(--gold)' : 'var(--mute)';
+  const AX = 150;   // axe du temps
+  let g = '';
+  // bandes : phase de lane (jusqu'à 14:00) puis mid game
+  g += `<rect x="${frX(0)}" y="${AX - 4}" width="${frX(840) - frX(0)}" height="8" rx="4" fill="var(--line)"/><rect x="${frX(840)}" y="${AX - 4}" width="${frX(1200) - frX(840)}" height="8" rx="4" fill="var(--panel)" stroke="var(--line)"/>`;
+  g += `<text x="${frX(420)}" y="${AX + 40}" font-size="11" text-anchor="middle" fill="var(--mute)">phase de lane</text><text x="${frX(1020)}" y="${AX + 40}" font-size="11" text-anchor="middle" fill="var(--mute)">mid game</text>`;
+  // une graduation et un libellé par minute
+  for (let m = 0; m <= 20; m++) { const x = frX(m * 60); g += `<line x1="${x}" y1="${AX - 9}" x2="${x}" y2="${AX + 9}" stroke="var(--mute)" stroke-width="${m % 5 ? 1 : 2}" opacity="${m % 5 ? .5 : .9}"/><text x="${x}" y="${AX + 24}" font-size="${m % 5 ? 11 : 13}" font-weight="${m % 5 ? 400 : 700}" text-anchor="middle" fill="${m % 5 ? 'var(--mute)' : 'var(--txt)'}">${m}</text>`; }
+  // vagues canon : triangles sur l'axe
+  tl.filter(e => e.k === 'wave').forEach(e => { const x = frX(e.t); g += `<path d="M${x - 6} ${AX - 7} L${x + 6} ${AX - 7} L${x} ${AX - 17} Z" fill="var(--txt)" opacity=".55"><title>${frT(e.t)} · ${esc(e.txt)}</title></path>`; });
+  // objectifs : gros ronds avec leur nom
+  tl.filter(e => e.k === 'obj').forEach(e => { const x = frX(e.t); g += `<line x1="${x}" y1="${AX - 18}" x2="${x}" y2="${AX - 6}" stroke="${col(e.side)}" stroke-width="2"/><circle cx="${x}" cy="${AX - 32}" r="11" fill="${col(e.side)}"><title>${frT(e.t)} · ${esc(e.txt)}</title></circle><text x="${x}" y="${AX - 50}" font-size="12" font-weight="700" text-anchor="middle" fill="var(--txt)">${esc(e.short)}</text>`; });
+  // actions et vision : losanges et libellé court, sur trois rangées pour ne pas se chevaucher
+  const acts = tl.filter(e => e.k === 'act' || e.k === 'vis'), last = [-1e9, -1e9, -1e9];
+  acts.forEach(e => {
+    const x = frX(e.t); let row = [0, 1, 2].find(k => x - last[k] > 70); if (row == null) row = 0; last[row] = x;
+    const y = 18 + row * 22;
+    g += `<g><title>${frT(e.t)} · ${esc(e.txt)}</title><rect x="${x - 5}" y="${y - 5}" width="10" height="10" transform="rotate(45 ${x} ${y})" fill="${col(e.side)}" opacity="${e.k === 'vis' ? .65 : 1}"/><text x="${x + 10}" y="${y + 4}" font-size="11" fill="var(--txt)">${esc(e.short)}</text><line x1="${x}" y1="${y + 7}" x2="${x}" y2="${AX - 10}" stroke="${col(e.side)}" stroke-dasharray="2 3" opacity=".45"/></g>`;
+  });
+  if (now != null) { const x = frX(Math.max(0, Math.min(FR_MAX, now))); g += `<line id="${id}-cur" x1="${x}" y1="6" x2="${x}" y2="${AX + 12}" stroke="var(--red)" stroke-width="3"/>`; }
+  const list = tl.filter(e => e.k !== 'wave').map(e => `<li data-t="${e.t}" class="fr-${e.side || 'all'}"><b>${frT(e.t)}</b> ${esc(e.txt)}</li>`).join('');
+  return `<div class="frise" ${id ? `id="${id}"` : ''}><svg viewBox="0 0 1000 200" role="img" aria-label="Frise des 20 premières minutes">${g}</svg>
+    <p class="note">Minutes de jeu · ▲ vague canon (sortie de base) · ● objectif · ◆ action ou vision · <span style="color:var(--blue)">bleu</span> côté top, <span style="color:var(--gold)">or</span> côté bot, gris toute la carte${now != null ? ' · <span style="color:var(--red)">rouge</span> : maintenant' : ''}. Horaires saison 16 ; le choix dragon, larves ou cross map suit le plan de jeu (règles écrites à la main).</p>
+    <details class="cplan"><summary>Détail minute par minute</summary><ol class="frl">${list}</ol></details></div>`;
+}
 // ----- Plan de jeu (commun aux compos et au résumé) -----
 function planHtml(plan, title) {
   let h = `<div class="plan">${title ? `<h4>${title}</h4>` : ''}<p>${esc(plan.obj)}</p><p>${esc(plan.focusTxt)}</p>`;
