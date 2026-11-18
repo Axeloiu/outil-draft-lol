@@ -14,7 +14,7 @@ Compteurs, par patch :
 Scénarios = profil de la compo adverse : all, ap3, ad4, cc3, heal2, shield2, tank2, burst2, auto3.
 Files : solo/duo (420) et flex (440), comptées à part (clé « patch|file »).
 En plus des compteurs, une ligne par partie est ajoutée à rows/AAAA-MM-JJ.jsonl.gz (pour le modèle appris et
-les simulations) : patch, file, durée, début, équipe gagnante, et pour chaque équipe les 5 champions avec rôle,
+les simulations) : région, patch, file, durée, début, équipe gagnante, et pour chaque équipe les 5 champions avec rôle,
 objets finaux et sorts. Aucun identifiant de joueur.
 
 La clé Riot vient de la variable d'environnement RIOT_API_KEY (secret du dépôt), jamais du code.
@@ -30,7 +30,7 @@ BASE = os.environ.get('RIOT_BASE', '')  # tests : serveur factice, ex. http://12
 STATE = sys.argv[1] if len(sys.argv) > 1 else 'state.json.gz'
 QUEUES = (420, 440)
 LADDER_QUEUES = ('RANKED_SOLO_5x5', 'RANKED_FLEX_SR')
-ROWS_KEEP_DAYS = 21
+ROWS_KEEP_DAYS = int(os.environ.get('ROWS_KEEP_DAYS', '3650'))  # on garde tout (≈ 3 Mo par jour hors rattrapage)
 OUT = sys.argv[2] if len(sys.argv) > 2 else 'stats.json'
 HERE = os.path.dirname(os.path.abspath(__file__))
 # profil compact par champion : type de dégâts (AD/AP/T) puis 6 drapeaux cc, tank, burst, heal, shield, auto
@@ -159,17 +159,17 @@ def add(d, key, win):
 ROWS = []
 
 
-def row_of(info, patch, q):
+def row_of(info, patch, q, region=''):
     ps = info.get('participants') or []
     win = next((p.get('teamId') for p in ps if p.get('win')), 0)
     side = lambda t: [[p.get('championId'), POS.get(p.get('teamPosition') or '', ''),
                        [p.get(f'item{i}') for i in range(7) if p.get(f'item{i}')],
                        [p.get('summoner1Id'), p.get('summoner2Id')]] for p in ps if p.get('teamId') == t]
-    return {'p': patch, 'q': q, 'd': info.get('gameDuration'), 't': int((info.get('gameStartTimestamp') or 0) / 1000),
+    return {'g': region, 'p': patch, 'q': q, 'd': info.get('gameDuration'), 't': int((info.get('gameStartTimestamp') or 0) / 1000),
             'w': 'B' if win == 100 else 'R' if win == 200 else '', 'B': side(100), 'R': side(200)}
 
 
-def count_match(st, m):
+def count_match(st, m, region=''):
     info = m.get('info') or {}
     q = info.get('queueId')
     if q not in QUEUES or (info.get('gameDuration') or 0) < 900:
@@ -179,7 +179,7 @@ def count_match(st, m):
     ps = info.get('participants') or []
     if len(ps) != 10:
         return False
-    ROWS.append(row_of(info, patch, q))
+    ROWS.append(row_of(info, patch, q, region))
     S = st['stats'].setdefault(f'{patch}|{q}', {'n': 0, 'cr': {}, 'mu': {}, 'ct': {}, 'it': {}})
     S['n'] += 1
     teams = {}
@@ -243,7 +243,7 @@ def run_region(st, region):
             m = get(reg, f'/lol/match/v5/matches/{mid}')
             if m:
                 with LOCK:
-                    if count_match(st, m):
+                    if count_match(st, m, region):
                         n_new += 1
         return len(mids)
 
