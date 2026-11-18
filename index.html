@@ -1481,25 +1481,26 @@ function mlComp(A, B) {
 // parties pros 2026, niveau des équipes contrôlé par un Elo). Le côté dépend du format de la partie.
 // Côté bleu, en points : en tournoi, mesuré sur les pros ; en flex, mesuré sur nos parties Master+ flex.
 // WR pro 2026 d'un champion, lissé vers 50 % (K parties fictives, choisi par validation chronologique), en points
-function proWrPts(c) { const x = PRO26.wr[c.id]; const n = x ? x[0] : 0, w = x ? x[1] : 0; return ((w + PRO26.K / 2) / (n + PRO26.K) - 0.5) * 100; }
+// Exception choisie par Axel (règle écrite à la main, non mesurée) : le WR pro d'Aurelion Sol ne compte pas.
+const PRO_WR_SKIP = new Set([136]);
+function proWrPts(c) { if (PRO_WR_SKIP.has(c.id)) return 0; const x = PRO26.wr[c.id]; const n = x ? x[0] : 0, w = x ? x[1] : 0; return ((w + PRO26.K / 2) / (n + PRO26.K) - 0.5) * 100; }
 // Présence pro d'un pick, en points : mesurée sur nos 21 695 parties flex Master+ (analyses/modele/test_hors_meta_flex.py),
 // à composantes solo queue égales, +0,15 point par unité de log(1 + parties pros 2026 à ce rôle), IC95 +0,06 à +0,24
 // (en solo/duo +0,03, IC95 −0,02 à +0,07 : rien). Appliquée en flex et en tournoi (équipes de 5). Centrée par rôle sur le
 // pick moyen des parties Master+, pour que les compos partielles ne gagnent rien au simple nombre de picks.
-const PRES_K = 0.15, PRES_C = {};
+const PRES_X = 1, PRES_K = 0.15, PRES_C = {};
 function presRaw(c, r) { return Math.log1p((PRO26.freq[r] || {})[c.id] || 0); }
 function presPts(c, r) {
   if (PRES_C[r] == null) { let s = 0, w = 0; CH.forEach(x => { const g = x.r[r] ? x.r[r][1] : 0; if (g) { s += g * presRaw(x, r); w += g; } }); PRES_C[r] = w ? s / w : 0; }
-  return PRES_K * (presRaw(c, r) - PRES_C[r]);
+  return PRES_X * PRES_K * (presRaw(c, r) - PRES_C[r]);
 }
 function sideBlue() { return S.mode === 'tourn' ? PRO26.side : MODEL.side + MODEL.flex; }
-// Poids du modèle, en flex comme en tournoi amateur : calage mesuré sur nos parties Master+ (analyses/modele/test_wr_pro_flex.py,
-// 132 860 parties dont 21 695 en flex) : les composantes solo queue comptent × 1 (elles sont déjà recalées par MODEL.mult)
-// et le WR pro ne prédit rien (+0,03 point par point, IC95 −0,00 à +0,07 ; −0,11 en flex ; aucun gain de prédiction) → × 0.
-// Le recalage sur les parties pros (PRO26.mt ≈ 0,43, PRO26.mp ≈ 0,56) vaut pour des équipes pros, pas pour nos adversaires :
-// il n'est plus utilisé pour le score. Les données pros servent encore à l'ordre de draft, au filtre « joué en pro »,
-// au comportement de pick et de ban de l'adversaire et à l'effet de côté en tournoi.
-const FLEX_W = { mt: 1, mp: 0 };
+// Poids du modèle, en flex comme en tournoi : calage sur les parties pros 2026 (PRO26.mt ≈ 0,43 pour les composantes solo
+// queue, PRO26.mp ≈ 0,56 pour le WR pro des champions), choix d'Axel. Mesure pour mémoire (analyses/modele/test_wr_pro_flex.py,
+// 132 860 parties Master+ dont 21 695 en flex) : sur nos parties, le WR pro ne prédit rien (+0,03 point par point, IC95 −0,00
+// à +0,07 ; −0,11 en flex) et le calage Master+ seul (× 1 et × 0) prédit mieux. Les données pros servent aussi à l'ordre de
+// draft, au filtre « joué en pro », au comportement de pick et de ban de l'adversaire et à l'effet de côté en tournoi.
+const FLEX_W = { mt: PRO26.mt, mp: PRO26.mp };
 function wMt() { return FLEX_W.mt; }
 function wMp() { return FLEX_W.mp; }
 function sideLabel() { return S.mode === 'tourn' ? 'mesuré sur les parties pros 2026' : 'mesuré sur les parties flex Master+'; }
@@ -1540,7 +1541,7 @@ function draftScore(ourM, enM) {
   let pa = 0, pb = 0; ROLES.forEach(r => { if (ourM[r]) pa += proWrPts(ourM[r]); if (enM[r]) pb += proWrPts(enM[r]); });
   let qa = 0, qb = 0; ROLES.forEach(r => { if (ourM[r]) qa += presPts(ourM[r], r); if (enM[r]) qb += presPts(enM[r], r); });
   parts.push(['Présence pro des picks à leur rôle (mesurée en flex)', qa - qb, qa, qb]);
-  if (wMp()) parts.push([`WR pro 2026 des champions (lissé, ${Math.round(PRO26.n / 100) / 10} k parties)`, (pa - pb) * wMp(), pa * wMp(), pb * wMp()]);
+  if (wMp()) parts.push([`WR pro 2026 des champions (lissé, ${Math.round(PRO26.n / 100) / 10} k parties ; Aurelion Sol exclu, choix d’Axel)`, (pa - pb) * wMp(), pa * wMp(), pb * wMp()]);
   const sb = sideBlue();
   parts.push([`Côté ${S.side === 'R' ? 'rouge' : 'bleu'} (${sideLabel()})`, S.side === 'R' ? -sb : sb, null, null]);
   const shA = draftShape(ROLES.map(r => ourM[r]), ROLES.map(r => enM[r])), shB = draftShape(ROLES.map(r => enM[r]), ROLES.map(r => ourM[r]));
@@ -2860,10 +2861,10 @@ function scoreRow(cp) {
   const b = compBreak(cp);
   const chip = (lab, v, tip, sub) => `<span class="sc ${v >= 0.5 ? 'up' : v <= -0.5 ? 'down' : ''}" title="${esc(tip)}"><small>${lab}</small><b>${fmtp(v)}</b>${sub ? `<em>${sub}</em>` : ''}</span>`;
   return `<div class="scrow"><span class="sc tot" title="Winrate attendu au-dessus de 50 % pour les champions encore à picker (modèle de la simulation, côté non compris) ; les compos sont classées par ce total plus les choix de l’équipe"><small>Modèle</small><b>${fmtp(cp.model || 0)}</b></span>
-    ${chip('Champions', b.force + b.lane, 'Force des champions et duels de lane (contre l’adversaire connu, sinon contre les champions probables), modèle Master+')}
+    ${chip('Champions', b.force + b.lane, 'Force des champions et duels de lane (contre l’adversaire connu, sinon contre les champions probables), modèle Master+ recalé sur les pros')}
     ${chip('Synergies', b.syn, 'Synergies mesurées entre ces champions et avec ceux déjà pickés')}
     ${chip('Contre eux', b.vs, 'Effets mesurés contre les champions adverses hors lane (connus, sinon probables)')}
-    ${chip('Pro', b.pro, 'Présence des champions à leur rôle chez les pros : mesurée sur nos parties flex, +0,15 point par unité de log des parties pros (un pick presque jamais joué en pro à ce rôle perd jusqu’à 1 point face à un pick très joué)', b.nPro ? b.nPro + ' très joués' : '')}
+    ${chip('Pro', b.pro, 'WR pro 2026 des champions, lissé, niveau des équipes contrôlé (Aurelion Sol exclu : choix d’Axel, non mesuré), plus leur présence à leur rôle chez les pros (mesurée sur nos parties flex : un pick presque jamais joué en pro à ce rôle perd jusqu’à 1 point face à un pick très joué)', b.nPro ? b.nPro + ' très joués' : '')}
     ${chip('Aisance', b.comf, 'Aisance déclarée : (note − 5) × 0,12 point ; hors pool = note 0', b.cf != null ? b.cf.toFixed(1).replace('.', ',') + '/10' : '')}
     ${Math.abs(b.choix) >= 0.3 ? chip('Choix', b.choix, 'Préférences de l’équipe : compo visée, envies du jour, style demandé (ne viennent pas du modèle)') : ''}</div>`;
 }
