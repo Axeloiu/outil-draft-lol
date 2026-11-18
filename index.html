@@ -1477,19 +1477,21 @@ function mlComp(A, B) {
 // ===== Score de fin de draft : winrate estimé à partir des stats =====
 // Modèle Master+ (priors u.gg / LoLalytics recalés sur des parties postérieures aux priors) en points de winrate :
 // force des champions + duels au-delà des forces + synergies internes + compo contre compo.
-// Ce modèle compte × wMt(), plus le WR pro des champions × wMp() : recalage pro en tournoi, calage Master+ en flex (voir wMt).
+// Ce modèle compte × wMt(), plus le WR pro des champions × wMp() : calage mesuré sur les parties Master+ (voir wMt).
 // parties pros 2026, niveau des équipes contrôlé par un Elo). Le côté dépend du format de la partie.
 // Côté bleu, en points : en tournoi, mesuré sur les pros ; en flex, mesuré sur nos parties Master+ flex.
 // WR pro 2026 d'un champion, lissé vers 50 % (K parties fictives, choisi par validation chronologique), en points
 function proWrPts(c) { const x = PRO26.wr[c.id]; const n = x ? x[0] : 0, w = x ? x[1] : 0; return ((w + PRO26.K / 2) / (n + PRO26.K) - 0.5) * 100; }
 function sideBlue() { return S.mode === 'tourn' ? PRO26.side : MODEL.side + MODEL.flex; }
-// Poids selon le format de la partie. En tournoi : recalage mesuré sur les parties pros 2026 (PRO26.mt, PRO26.mp).
-// En flex : calage mesuré sur nos parties Master+ (analyses/modele/test_wr_pro_flex.py, 132 860 parties dont 21 695 en
-// flex) : les composantes solo queue comptent × 1 (elles sont déjà recalées par MODEL.mult) et le WR pro ne prédit plus
-// rien (+0,03 point par point, IC95 −0,00 à +0,07, sur toutes les files ; −0,11 en flex ; aucun gain de prédiction) → × 0.
+// Poids du modèle, en flex comme en tournoi amateur : calage mesuré sur nos parties Master+ (analyses/modele/test_wr_pro_flex.py,
+// 132 860 parties dont 21 695 en flex) : les composantes solo queue comptent × 1 (elles sont déjà recalées par MODEL.mult)
+// et le WR pro ne prédit rien (+0,03 point par point, IC95 −0,00 à +0,07 ; −0,11 en flex ; aucun gain de prédiction) → × 0.
+// Le recalage sur les parties pros (PRO26.mt ≈ 0,43, PRO26.mp ≈ 0,56) vaut pour des équipes pros, pas pour nos adversaires :
+// il n'est plus utilisé pour le score. Les données pros servent encore à l'ordre de draft, au filtre « joué en pro »,
+// au comportement de pick et de ban de l'adversaire et à l'effet de côté en tournoi.
 const FLEX_W = { mt: 1, mp: 0 };
-function wMt() { return S.mode === 'tourn' ? PRO26.mt : FLEX_W.mt; }
-function wMp() { return S.mode === 'tourn' ? PRO26.mp : FLEX_W.mp; }
+function wMt() { return FLEX_W.mt; }
+function wMp() { return FLEX_W.mp; }
 function sideLabel() { return S.mode === 'tourn' ? 'mesuré sur les parties pros 2026' : 'mesuré sur les parties flex Master+'; }
 // écart de duel au-delà des forces (prior seul), rétréci selon le nombre de parties : variance réelle des duels ≈ 3 points²
 function laneRes(a, b, r) {
