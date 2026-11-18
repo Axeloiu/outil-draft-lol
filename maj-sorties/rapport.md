@@ -1,14 +1,14 @@
-# Mise à jour automatique du 18/11/2026 16:57 UTC
+# Mise à jour automatique du 18/11/2026 17:32 UTC
 
 Catalogue des objets : Data Dragon 16.23.1, 253 objets.
 
 ## Modèle Master+
-Parties postérieures aux priors : 143586 ; test sur les 28718 plus récentes : log loss en place 0.68532, nouveau 0.68535, côté seul 0.69155.
+Parties postérieures aux priors : 143586 ; test sur les 28718 plus récentes : log loss en place 0.68533, nouveau 0.68535, côté seul 0.69155.
 → modèle mis à jour : poids [1.0008, 0.693, 1.1753, 0.626], côté bleu -1.88, flex -2.10.
 
 ## Parties pros
-Parties pros : 1424 parties Leaguepedia sur 365 jours (476 réorientées bleu / rouge).
-Recalage : modèle Master+ × 0.567, WR pro × 1.602, côté bleu +2.16 ; gain du WR pro sur l’Elo +0.00059 ; κ par rôle [0.261, 0.007, 0.104, 0.198, 0.225].
+Parties pros : 6785 parties Leaguepedia sur 365 jours (2354 réorientées bleu / rouge).
+Recalage : modèle Master+ × 0.431, WR pro × 0.558, côté bleu +2.85 ; gain du WR pro sur l’Elo +0.00476 ; κ par rôle [0.245, 0.064, 0.116, 0.19, 0.179].
 → données pros mises à jour.
 
 ## Objets
