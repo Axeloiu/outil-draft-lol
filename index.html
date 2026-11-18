@@ -1482,6 +1482,16 @@ function mlComp(A, B) {
 // Côté bleu, en points : en tournoi, mesuré sur les pros ; en flex, mesuré sur nos parties Master+ flex.
 // WR pro 2026 d'un champion, lissé vers 50 % (K parties fictives, choisi par validation chronologique), en points
 function proWrPts(c) { const x = PRO26.wr[c.id]; const n = x ? x[0] : 0, w = x ? x[1] : 0; return ((w + PRO26.K / 2) / (n + PRO26.K) - 0.5) * 100; }
+// Présence pro d'un pick, en points : mesurée sur nos 21 695 parties flex Master+ (analyses/modele/test_hors_meta_flex.py),
+// à composantes solo queue égales, +0,15 point par unité de log(1 + parties pros 2026 à ce rôle), IC95 +0,06 à +0,24
+// (en solo/duo +0,03, IC95 −0,02 à +0,07 : rien). Appliquée en flex et en tournoi (équipes de 5). Centrée par rôle sur le
+// pick moyen des parties Master+, pour que les compos partielles ne gagnent rien au simple nombre de picks.
+const PRES_K = 0.15, PRES_C = {};
+function presRaw(c, r) { return Math.log1p((PRO26.freq[r] || {})[c.id] || 0); }
+function presPts(c, r) {
+  if (PRES_C[r] == null) { let s = 0, w = 0; CH.forEach(x => { const g = x.r[r] ? x.r[r][1] : 0; if (g) { s += g * presRaw(x, r); w += g; } }); PRES_C[r] = w ? s / w : 0; }
+  return PRES_K * (presRaw(c, r) - PRES_C[r]);
+}
 function sideBlue() { return S.mode === 'tourn' ? PRO26.side : MODEL.side + MODEL.flex; }
 // Poids du modèle, en flex comme en tournoi amateur : calage mesuré sur nos parties Master+ (analyses/modele/test_wr_pro_flex.py,
 // 132 860 parties dont 21 695 en flex) : les composantes solo queue comptent × 1 (elles sont déjà recalées par MODEL.mult)
@@ -1528,6 +1538,8 @@ function draftScore(ourM, enM) {
   if (Math.abs(ml) > 1e-9) parts.push([`Ajustements appris (${Math.round(MODEL.n / 1000)} k parties Master+)`, ml, null, null]);
   parts.forEach(p => { p[1] *= mt; if (p[2] != null) p[2] *= mt; if (p[3] != null) p[3] *= mt; });
   let pa = 0, pb = 0; ROLES.forEach(r => { if (ourM[r]) pa += proWrPts(ourM[r]); if (enM[r]) pb += proWrPts(enM[r]); });
+  let qa = 0, qb = 0; ROLES.forEach(r => { if (ourM[r]) qa += presPts(ourM[r], r); if (enM[r]) qb += presPts(enM[r], r); });
+  parts.push(['Présence pro des picks à leur rôle (mesurée en flex)', qa - qb, qa, qb]);
   if (wMp()) parts.push([`WR pro 2026 des champions (lissé, ${Math.round(PRO26.n / 100) / 10} k parties)`, (pa - pb) * wMp(), pa * wMp(), pb * wMp()]);
   const sb = sideBlue();
   parts.push([`Côté ${S.side === 'R' ? 'rouge' : 'bleu'} (${sideLabel()})`, S.side === 'R' ? -sb : sb, null, null]);
@@ -1694,8 +1706,8 @@ function fastScore(M, O, sideOf) {
   const K = MODEL.mult; let v = 0;
   for (const r of ROLES) {
     const a = M[r], b = O[r];
-    if (a) v += K[0] * fsF(a, r) + chPts(a, r);
-    if (b) v -= K[0] * fsF(b, r) + chPts(b, r);
+    if (a) v += K[0] * fsF(a, r) + chPts(a, r) + presPts(a, r);
+    if (b) v -= K[0] * fsF(b, r) + chPts(b, r) + presPts(b, r);
     if (a && b) v += fsLane(a, b, r);
   }
   const syn = X => { let s = 0; for (let i = 0; i < 5; i++) { const a = X[ROLES[i]]; if (!a) continue; for (let j = i + 1; j < 5; j++) { const b = X[ROLES[j]]; if (b && b.id !== a.id) s += (fsPair('A', a, ROLES[i], b, ROLES[j]) + fsPair('A', b, ROLES[j], a, ROLES[i])) / 2; } } return s; };
@@ -1744,7 +1756,7 @@ function fieldE(x, r, rb) {
 // gain attendu d'ajouter x au rôle r, pour la politique de nos picks futurs (adversaires inconnus = moyenne du terrain)
 function addGain(x, r, M, O) { return gainCore(x, r, M, O) + comfortPts(x, r); }
 // même gain sans l'aisance de nos joueurs : c'est aussi ce que l'adversaire cherche à maximiser, de son point de vue
-function gainCore(x, r, M, O) { return wMt() * soloGain(x, r, M, O) + wMp() * proWrPts(x); }
+function gainCore(x, r, M, O) { return wMt() * soloGain(x, r, M, O) + wMp() * proWrPts(x) + presPts(x, r); }
 // gain selon le modèle Master+ seul (sans recalage pro ni WR pro) : validé sur nos parties solo et flex Master+
 function soloGain(x, r, M, O) {
   const K = MODEL.mult; let v = K[0] * fsF(x, r) + chPts(x, r);
@@ -1779,7 +1791,7 @@ function counterRecs(r, metaTop) {
 // --- Valeur d'un champion pour les compos : mêmes termes que addGain, décomposés pour l'affichage ---
 // mine : nos champions déjà pickés (rôle → champion) ; en : champions adverses connus (rôle → champion)
 function champParts(x, r, mine, en) {
-  const K = MODEL.mult, mt = wMt(), p = { force: mt * (K[0] * fsF(x, r) + chPts(x, r)), lane: 0, syn: 0, vs: 0, pro: wMp() * proWrPts(x), comf: comfortPts(x, r) };
+  const K = MODEL.mult, mt = wMt(), p = { force: mt * (K[0] * fsF(x, r) + chPts(x, r)), lane: 0, syn: 0, vs: 0, pro: wMp() * proWrPts(x) + presPts(x, r), comf: comfortPts(x, r) };
   p.lane = mt * (en[r] ? fsLane(x, en[r], r) : fieldLane(x, r));
   for (const rb of ROLES) {
     if (rb === r) continue;
@@ -1790,7 +1802,7 @@ function champParts(x, r, mine, en) {
   return p;
 }
 // valeur d'un champion seul (force + WR pro), pour trier les candidats hors pool
-function champVal(c, r) { return wMt() * (MODEL.mult[0] * fsF(c, r) + chPts(c, r)) + wMp() * proWrPts(c); }
+function champVal(c, r) { return wMt() * (MODEL.mult[0] * fsF(c, r) + chPts(c, r)) + wMp() * proWrPts(c) + presPts(c, r); }
 
 // --- Tirage ---
 function rng(seed) { let a = seed >>> 0; return () => { a = (a + 0x6D2B79F5) >>> 0; let t = a; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }
@@ -2848,10 +2860,10 @@ function scoreRow(cp) {
   const b = compBreak(cp);
   const chip = (lab, v, tip, sub) => `<span class="sc ${v >= 0.5 ? 'up' : v <= -0.5 ? 'down' : ''}" title="${esc(tip)}"><small>${lab}</small><b>${fmtp(v)}</b>${sub ? `<em>${sub}</em>` : ''}</span>`;
   return `<div class="scrow"><span class="sc tot" title="Winrate attendu au-dessus de 50 % pour les champions encore à picker (modèle de la simulation, côté non compris) ; les compos sont classées par ce total plus les choix de l’équipe"><small>Modèle</small><b>${fmtp(cp.model || 0)}</b></span>
-    ${chip('Champions', b.force + b.lane, 'Force des champions et duels de lane (contre l’adversaire connu, sinon contre les champions probables), modèle Master+ recalé sur les pros')}
+    ${chip('Champions', b.force + b.lane, 'Force des champions et duels de lane (contre l’adversaire connu, sinon contre les champions probables), modèle Master+')}
     ${chip('Synergies', b.syn, 'Synergies mesurées entre ces champions et avec ceux déjà pickés')}
     ${chip('Contre eux', b.vs, 'Effets mesurés contre les champions adverses hors lane (connus, sinon probables)')}
-    ${chip('Pro', b.pro, 'Winrate pro 2026 des champions, lissé, niveau des équipes contrôlé', b.nPro ? b.nPro + ' très joués' : '')}
+    ${chip('Pro', b.pro, 'Présence des champions à leur rôle chez les pros : mesurée sur nos parties flex, +0,15 point par unité de log des parties pros (un pick presque jamais joué en pro à ce rôle perd jusqu’à 1 point face à un pick très joué)', b.nPro ? b.nPro + ' très joués' : '')}
     ${chip('Aisance', b.comf, 'Aisance déclarée : (note − 5) × 0,12 point ; hors pool = note 0', b.cf != null ? b.cf.toFixed(1).replace('.', ',') + '/10' : '')}
     ${Math.abs(b.choix) >= 0.3 ? chip('Choix', b.choix, 'Préférences de l’équipe : compo visée, envies du jour, style demandé (ne viennent pas du modèle)') : ''}</div>`;
 }
