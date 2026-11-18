@@ -14,8 +14,13 @@ Compteurs, par patch :
 Scénarios = profil de la compo adverse : all, ap3, ad4, cc3, heal2, shield2, tank2, burst2, auto3.
 Files : solo/duo (420) et flex (440), comptées à part (clé « patch|file »).
 En plus des compteurs, une ligne par partie est ajoutée à rows/AAAA-MM-JJ.jsonl.gz (pour le modèle appris et
-les simulations) : région, patch, file, durée, début, équipe gagnante, et pour chaque équipe les 5 champions avec rôle,
-objets finaux et sorts. Aucun identifiant de joueur.
+les simulations) : identifiant de partie, région, patch, file, durée, début, équipe gagnante, et pour chaque équipe les
+5 champions avec rôle, objets finaux et sorts. Aucun identifiant de joueur.
+Timelines (TIMELINES=1, par défaut) : pour chaque partie gardée, un appel de plus (match-v5 timeline) et une ligne dans
+timelines/AAAA-MM-JJ.jsonl.gz, reliée à rows par l'identifiant de partie, dans le même ordre de joueurs que rows :
+or, xp et farm à 10 et 14 minutes, achats (objet, minute), positions du jungler de 1 à 4 minutes, et premiers objectifs
+(premier sang, première tour, dragons, larves, héraut, nashor). Fichier à part pour ne pas alourdir la lecture de rows.
+Si la timeline échoue, la partie est gardée sans elle.
 
 La clé Riot vient de la variable d'environnement RIOT_API_KEY (secret du dépôt), jamais du code.
 Bibliothèque standard uniquement.
@@ -45,7 +50,12 @@ LADDER_EVERY = 12 * 3600
 LOOKBACK = 3 * 86400
 # Rattrapage : en plus des nouvelles parties, chaque visite d'un joueur remonte une page (100 parties) de son
 # historique, jusqu'à BACKFILL_DAYS jours en arrière (environ un patch), puis le joueur est marqué terminé.
-BACKFILL_DAYS = int(os.environ.get('BACKFILL_DAYS', '14'))
+# Avec les timelines (un appel de plus par partie), le rattrapage se limite par défaut aux 3 derniers jours :
+# les parties plus anciennes sont sur des patchs passés et coûtent les appels qui servent aux timelines.
+BACKFILL_DAYS = int(os.environ.get('BACKFILL_DAYS', '3'))
+TIMELINES = os.environ.get('TIMELINES', '1') == '1'
+TL_ROWS = []
+STATS_TL = {'ok': 0, 'ko': 0}
 KEEP_PATCHES = 3
 
 T0 = time.time()
@@ -87,13 +97,13 @@ class Limiter:
 LIMITERS = {}
 
 
-def get(host, path, params=None):
+def get(host, path, params=None, tries=5):
     """GET sur l'API Riot, avec limites, retry sur 429/5xx. Renvoie le JSON, ou None (404)."""
     lim = LIMITERS.setdefault(host, Limiter())
     url = (BASE.format(host=host) if BASE else f'https://{host}.api.riotgames.com') + path
     if params:
         url += '?' + urllib.parse.urlencode(params)
-    for attempt in range(5):
+    for attempt in range(tries):
         if STOP['reason']:
             return None
         lim.wait()
@@ -159,27 +169,29 @@ def add(d, key, win):
 ROWS = []
 
 
-def row_of(info, patch, q, region=''):
+def row_of(info, patch, q, region='', mid=''):
     ps = info.get('participants') or []
     win = next((p.get('teamId') for p in ps if p.get('win')), 0)
     side = lambda t: [[p.get('championId'), POS.get(p.get('teamPosition') or '', ''),
                        [p.get(f'item{i}') for i in range(7) if p.get(f'item{i}')],
                        [p.get('summoner1Id'), p.get('summoner2Id')]] for p in ps if p.get('teamId') == t]
-    return {'g': region, 'p': patch, 'q': q, 'd': info.get('gameDuration'), 't': int((info.get('gameStartTimestamp') or 0) / 1000),
+    return {'m': mid, 'g': region, 'p': patch, 'q': q, 'd': info.get('gameDuration'), 't': int((info.get('gameStartTimestamp') or 0) / 1000),
             'w': 'B' if win == 100 else 'R' if win == 200 else '', 'B': side(100), 'R': side(200)}
 
 
 def count_match(st, m, region=''):
+    """Compte la partie ; renvoie sa ligne (vrai) ou None si elle n'est pas gardée."""
     info = m.get('info') or {}
     q = info.get('queueId')
     if q not in QUEUES or (info.get('gameDuration') or 0) < 900:
-        return False
+        return None
     ver = str(info.get('gameVersion', ''))
     patch = '.'.join(ver.split('.')[:2]) if ver else 'x'
     ps = info.get('participants') or []
     if len(ps) != 10:
-        return False
-    ROWS.append(row_of(info, patch, q, region))
+        return None
+    row = row_of(info, patch, q, region, (m.get('metadata') or {}).get('matchId', ''))
+    ROWS.append(row)
     S = st['stats'].setdefault(f'{patch}|{q}', {'n': 0, 'cr': {}, 'mu': {}, 'ct': {}, 'it': {}})
     S['n'] += 1
     teams = {}
@@ -206,7 +218,51 @@ def count_match(st, m, region=''):
             for item in items:
                 if item:
                     add(d, str(item), win)
-    return True
+    return row
+
+
+def tl_of(tl, info):
+    """Résumé compact d'une timeline, joueurs dans l'ordre de rows (équipe 100 puis 200, ordre des participants)."""
+    ps = info.get('participants') or []
+    order = [p.get('participantId') for t in (100, 200) for p in ps if p.get('teamId') == t]
+    team = {p.get('participantId'): p.get('teamId') for p in ps}
+    jg = [p.get('participantId') for p in ps if p.get('teamPosition') == 'JUNGLE']
+    frames = ((tl or {}).get('info') or {}).get('frames') or []
+    def at(minute):
+        if len(frames) <= minute:
+            return None
+        pf = frames[minute].get('participantFrames') or {}
+        out = []
+        for pid in order:
+            f = pf.get(str(pid)) or {}
+            out.append([f.get('totalGold', 0), f.get('xp', 0), f.get('minionsKilled', 0) + f.get('jungleMinionsKilled', 0)])
+        return out
+    buys = {pid: [] for pid in order}
+    obj = {'fb': None, 'ft': None, 'dr': [], 'gr': [], 'he': [], 'ba': []}
+    for k, fr in enumerate(frames):
+        for e in fr.get('events') or []:
+            ty, ts = e.get('type'), int((e.get('timestamp') or 0) / 1000)
+            if ty == 'ITEM_PURCHASED' and e.get('itemId') not in SKIP_ITEMS and e.get('participantId') in buys:
+                buys[e['participantId']].append([e.get('itemId'), ts // 60])
+            elif ty == 'ITEM_UNDO' and e.get('participantId') in buys:
+                b = buys[e['participantId']]
+                if b and b[-1][0] == e.get('beforeId'):
+                    b.pop()
+            elif ty == 'CHAMPION_KILL' and obj['fb'] is None and e.get('killerId') in team:
+                obj['fb'] = [team[e['killerId']], ts]
+            elif ty == 'BUILDING_KILL' and e.get('buildingType') == 'TOWER_BUILDING' and obj['ft'] is None:
+                obj['ft'] = [300 - (e.get('teamId') or 0), ts, (e.get('laneType') or '')[:3]]   # équipe qui la prend, seconde, lane
+            elif ty == 'ELITE_MONSTER_KILL':
+                kt, mt = e.get('killerTeamId'), e.get('monsterType')
+                key = {'DRAGON': 'dr', 'HORDE': 'gr', 'RIFTHERALD': 'he', 'BARON_NASHOR': 'ba'}.get(mt)
+                if key:
+                    obj[key].append([kt, ts] + ([(e.get('monsterSubType') or '')[:4]] if key == 'dr' else []))
+    jp = []
+    for minute in (1, 2, 3, 4):
+        if len(frames) > minute:
+            pf = frames[minute].get('participantFrames') or {}
+            jp.append([[(pf.get(str(pid)) or {}).get('position', {}).get('x'), (pf.get(str(pid)) or {}).get('position', {}).get('y')] for pid in jg])
+    return {'f10': at(10), 'f14': at(14), 'buy': [buys[pid] for pid in order], 'jg': [team.get(pid) for pid in jg], 'jp': jp, 'o': obj}
 
 
 def run_region(st, region):
@@ -243,8 +299,21 @@ def run_region(st, region):
             m = get(reg, f'/lol/match/v5/matches/{mid}')
             if m:
                 with LOCK:
-                    if count_match(st, m, region):
+                    row = count_match(st, m, region)
+                    if row:
                         n_new += 1
+                if row and TIMELINES and time.time() - T0 < BUDGET:
+                    # un échec ici ne doit jamais faire perdre la partie, déjà comptée
+                    try:
+                        tl = get(reg, f'/lol/match/v5/matches/{mid}/timeline', tries=2)   # 2 essais : une timeline ne vaut pas 40 s d'attente
+                        x = tl_of(tl, m.get('info') or {}) if tl else None
+                    except Exception as ex:
+                        x = None; log(f'timeline {mid} illisible : {ex.__class__.__name__}')
+                    with LOCK:
+                        if x and x['f10']:
+                            x['m'] = mid; TL_ROWS.append(x); STATS_TL['ok'] += 1
+                        else:
+                            STATS_TL['ko'] += 1
         return len(mids)
 
     while time.time() - T0 < BUDGET and not STOP['reason'] and R['players']:
@@ -278,19 +347,22 @@ def run_region(st, region):
 
 
 def write_rows():
-    if not ROWS:
-        return
-    d = os.path.join(os.path.dirname(os.path.abspath(OUT)), 'rows')
-    os.makedirs(d, exist_ok=True)
-    fn = os.path.join(d, time.strftime('%Y-%m-%d', time.gmtime()) + '.jsonl.gz')
-    with gzip.open(fn, 'at', encoding='utf-8') as f:  # ajout : un fichier par jour, plusieurs blocs gzip
-        for r in ROWS:
-            f.write(json.dumps(r, separators=(',', ':')) + '\n')
-    cutoff = time.strftime('%Y-%m-%d', time.gmtime(time.time() - ROWS_KEEP_DAYS * 86400))
-    for name in os.listdir(d):
-        if name.endswith('.jsonl.gz') and name[:10] < cutoff:
-            os.remove(os.path.join(d, name))
-    log(f'{len(ROWS)} lignes ajoutées à rows/{os.path.basename(fn)}')
+    for folder, lines in (('rows', ROWS), ('timelines', TL_ROWS)):
+        if not lines:
+            continue
+        d = os.path.join(os.path.dirname(os.path.abspath(OUT)), folder)
+        os.makedirs(d, exist_ok=True)
+        fn = os.path.join(d, time.strftime('%Y-%m-%d', time.gmtime()) + '.jsonl.gz')
+        with gzip.open(fn, 'at', encoding='utf-8') as f:  # ajout : un fichier par jour, plusieurs blocs gzip
+            for r in lines:
+                f.write(json.dumps(r, separators=(',', ':')) + '\n')
+        cutoff = time.strftime('%Y-%m-%d', time.gmtime(time.time() - ROWS_KEEP_DAYS * 86400))
+        for name in os.listdir(d):
+            if name.endswith('.jsonl.gz') and name[:10] < cutoff:
+                os.remove(os.path.join(d, name))
+        log(f'{len(lines)} lignes ajoutées à {folder}/{os.path.basename(fn)}')
+    if TIMELINES:
+        log(f'timelines : {STATS_TL["ok"]} gardées, {STATS_TL["ko"]} manquantes')
 
 
 def migrate(st):
