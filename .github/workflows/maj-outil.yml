@@ -1,0 +1,67 @@
+name: Mise à jour de l'outil
+
+# Chaque lundi vers 4 h (heure de Paris) et à la demande (bouton « Run workflow »).
+# Réapprend le modèle Master+ sur les parties de la branche data, refait les mesures pros (Leaguepedia) et les objets,
+# reconstruit le site et le publie. Chaque partie n'est publiée que si elle passe son garde-fou (voir maj/maj_outil.py
+# dans outil-maj.zip) ; le compte rendu est dans maj-sorties/rapport.md et dans le résumé du passage.
+on:
+  schedule:
+    - cron: '23 3 * * 1'
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+concurrency:
+  group: maj-outil
+  cancel-in-progress: false
+
+jobs:
+  maj:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - name: Code et sources de l'outil
+        uses: actions/checkout@v4
+        with:
+          path: code
+
+      - name: Parties collectées (branche data, lecture seule)
+        run: |
+          URL="https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git"
+          for i in 1 2 3 4 5; do git clone -q --depth 1 --branch data "$URL" data && break; rm -rf data; sleep 20; done
+          test -d data/rows
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Dépendances
+        run: pip install -q numpy scipy scikit-learn
+
+      - name: Mise à jour (garde-fous compris)
+        run: |
+          unzip -q code/outil-maj.zip -d src
+          python3 src/maj/maj_outil.py --racine src --rows data/rows --actuel code/maj-sorties --sortie sortie
+
+      - name: Compte rendu
+        if: always()
+        run: test -f sortie/rapport.md && cat sortie/rapport.md >> "$GITHUB_STEP_SUMMARY" || true
+
+      - name: Publication du site
+        run: |
+          mkdir -p code/maj-sorties
+          cp sortie/*.json sortie/rapport.md code/maj-sorties/
+          cp sortie/index.html code/index.html
+          cd code
+          git config user.name "mise a jour auto"
+          git config user.email "maj-outil@users.noreply.github.com"
+          git add index.html maj-sorties
+          if git diff --cached --quiet; then echo "rien de nouveau"; else
+            git commit -q -m "Mise à jour automatique $(date -u +%Y-%m-%d)"
+            for i in 1 2 3; do git pull -q --rebase origin main && git push -q origin HEAD:main && break; sleep 10; done
+          fi
