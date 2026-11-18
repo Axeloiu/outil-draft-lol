@@ -41,6 +41,7 @@ main{padding:14px 20px;max-width:1400px;margin:0 auto}
 .seg{display:flex;gap:3px;align-items:center;flex-wrap:wrap}
 .seg>span{color:var(--mute);font-size:12px;margin-right:4px}
 .chk{display:flex;gap:6px;align-items:center}
+.lvl{display:flex;gap:6px;align-items:center}.lvl input{width:90px}.lvl b{font-weight:600;min-width:9em}
 .game{color:var(--gold);font-size:13px}
 .grow{flex:1}
 .board{display:grid;grid-template-columns:230px 1fr 230px;gap:12px;align-items:start}
@@ -1489,9 +1490,15 @@ function sideBlue() { return S.mode === 'tourn' ? PRO26.side : MODEL.side + MODE
 // Le recalage sur les parties pros (PRO26.mt ≈ 0,43, PRO26.mp ≈ 0,56) vaut pour des équipes pros, pas pour nos adversaires :
 // il n'est plus utilisé pour le score. Les données pros servent encore à l'ordre de draft, au filtre « joué en pro »,
 // au comportement de pick et de ban de l'adversaire et à l'effet de côté en tournoi.
+// Curseur « niveau des adversaires » (S.lvl, de 0 à 1) : 0 = calage Master+ ci-dessus (réglage par défaut, le seul mesuré
+// pour des parties comme les nôtres), 1 = calage mesuré sur les parties pros 2026. Entre les deux, interpolation linéaire :
+// c'est un choix de l'utilisateur, pas une mesure (test_poids_mix.py : 50/50 prédit moins bien Master+, mieux les pros).
 const FLEX_W = { mt: 1, mp: 0 };
-function wMt() { return FLEX_W.mt; }
-function wMp() { return FLEX_W.mp; }
+function oppLvl() { const l = +S.lvl; return l > 0 ? Math.min(1, l) : 0; }
+function wMt() { const l = oppLvl(); return FLEX_W.mt + l * (PRO26.mt - FLEX_W.mt); }
+function wMp() { const l = oppLvl(); return FLEX_W.mp + l * (PRO26.mp - FLEX_W.mp); }
+const LVL_TXT = ['Master+ (solo queue)', '¼ pro', 'moitié pro', '¾ pro', 'pro'];
+function lvlTxt() { return LVL_TXT[Math.round(oppLvl() * 4)]; }
 function sideLabel() { return S.mode === 'tourn' ? 'mesuré sur les parties pros 2026' : 'mesuré sur les parties flex Master+'; }
 // écart de duel au-delà des forces (prior seul), rétréci selon le nombre de parties : variance réelle des duels ≈ 3 points²
 function laneRes(a, b, r) {
@@ -1616,7 +1623,7 @@ const ROLE_FR1 = { T: 'top', J: 'jungle', M: 'mid', B: 'ADC', S: 'support' };
 let IDC = { k: null, v: null };
 function idealNow() {
   const d = D(); if (!d) return null;
-  const k = [d.fill.join(','), JSON.stringify(d.roles), S.side, S.mode, S.target ? S.target.ids.join(',') : '', S.team.map(t => t.pool.join('.') + ':' + JSON.stringify(t.comf || {})).join('|'), OPT.offPool, OPT.proOnly, S.target ? S.target.style : ''].join('#');
+  const k = [d.fill.join(','), JSON.stringify(d.roles), S.side, S.mode, S.target ? S.target.ids.join(',') : '', S.team.map(t => t.pool.join('.') + ':' + JSON.stringify(t.comf || {})).join('|'), OPT.offPool, OPT.proOnly, S.target ? S.target.style : '', oppLvl()].join('#');
   if (IDC.k !== k) IDC = { k, v: bestComps(1, { target: true })[0] || null };
   return IDC.v;
 }
@@ -1872,7 +1879,7 @@ const SIM_N = 200;
 const SIM_OPT = { us: 'outil' };
 let SIM_SEED = 1000;
 const SIM_CACHE = new Map();
-function simSig() { return JSON.stringify([S.side, S.mode, D().fill, D().roles, S.team.map(p => [p.pool, p.comf || null])]); }
+function simSig() { return JSON.stringify([S.side, S.mode, D().fill, D().roles, S.team.map(p => [p.pool, p.comf || null]), oppLvl()]); }
 function simKey(force) { return simSig() + JSON.stringify(force ? [force.us && [force.us[0].id, force.us[1]], force.them && [force.them[0].id, force.them[1]], force.ban && force.ban.id] : 0); }
 function simValue(force) {
   const sig = simKey(force);
@@ -2886,7 +2893,7 @@ function renderComps() {
     <div class="ctrl"><label>Construire autour de <select id="clock"><option value="">personne en particulier</option>${S.team.map(p => `<optgroup label="${RL[p.role]}${p.name ? ' · ' + esc(p.name) : ''}">${p.pool.map(id => BY[id] ? `<option value="${p.role}|${id}" ${COMP_LOCK && COMP_LOCK.id === id && COMP_LOCK.r === p.role ? 'selected' : ''}>${esc(BY[id].n)}</option>` : '').join('')}</optgroup>`).join('')}</select></label>
       <label class="chk"><input type="checkbox" id="offp" ${OPT.offPool ? 'checked' : ''}> Proposer aussi hors pool</label>
       <label class="chk" title="Champion joué au moins ${PRO_MIN_G} fois à ce rôle dans les parties pros de l’année, et profil de dégâts (AD / AP / tanks) vu dans au moins ${SHAPE_MIN} compos pros"><input type="checkbox" id="prook" ${OPT.proOnly ? 'checked' : ''}> Seulement ce qui se joue en pro</label></div>
-    ${proOutNote()}
+    ${proOutNote()}${lvlNote()}
     <details class="wants" ${anyWant ? 'open' : ''}><summary><b>Envies du jour</b> <span class="note">chacun coche ce qu’il a envie de jouer, les compos se construisent autour (partagé en direct)</span></summary>
       ${S.team.map((p, i) => `<div class="wrow"><span class="prole">${RL[p.role]}</span><span class="wname">${esc(p.name || '')}</span>${p.pool.map(id => { const c = BY[id]; if (!c) return ''; const on = p.want && p.want.includes(id); return `<button class="wch ${on ? 'sel' : ''}" data-want="${i},${id}">${img(c)}${esc(c.n)}${on ? ' ★' : ''}</button>`; }).join('')}</div>`).join('')}
       <label class="chk"><input type="checkbox" id="onlyw" ${COMP_ONLYWANT ? 'checked' : ''}> Seulement les envies (pour les joueurs qui en ont coché)</label></details>`;
@@ -2910,6 +2917,7 @@ function renderComps() {
   $('#prook').onchange = () => { OPT.proOnly = $('#prook').checked; IDC = { k: null, v: null }; renderComps(); };
 }
 // champions des pools laissés de côté par l'option « Seulement ce qui se joue en pro »
+function lvlNote() { return `<p class="note">Adversaires : ${lvlTxt()}${oppLvl() ? ` (WR pro × ${wMp().toFixed(2)}, solo queue × ${wMt().toFixed(2)})` : ''}. Réglable dans l’onglet Draft.</p>`; }
 function proOutNote() {
   if (!OPT.proOnly) return '';
   const out = S.team.map(p => p.pool.map(id => BY[id]).filter(c => c && !proOK(c, p.role)).map(c => `${c.n} ${RL[p.role]} (${proGamesAt(c, p.role)})`)).flat();
@@ -3005,6 +3013,7 @@ function controls() {
     <div class="seg"><span>Nous sommes</span><button data-side="B" class="${S.side === 'B' ? 'on' : ''}">Bleu (1er pick)</button><button data-side="R" class="${S.side === 'R' ? 'on' : ''}">Rouge (dernier pick)</button></div>
     ${t ? `<label class="chk"><input type="checkbox" id="fear" ${S.fearless ? 'checked' : ''}> Fearless</label>` : ''}
     ${t && S.fearless ? `<span class="game">Game ${S.series.game} · ${S.series.locked.length} champions verrouillés</span><button id="nextg">Game suivante</button><button id="resets" class="ghost">Nouvelle série</button>` : ''}
+    <label class="lvl" title="Poids donné au WR des champions chez les pros. Master+ = réglage mesuré pour des parties comme les nôtres ; pro = calage mesuré sur les parties pros 2026 ; entre les deux, c’est ton choix (non mesuré).">Adversaires <input type="range" id="lvl" min="0" max="4" step="1" value="${Math.round(oppLvl() * 4)}"> <b id="lvlt">${lvlTxt()}</b></label>
     ${typeof autoControl === 'function' ? autoControl() : ''}
     <span class="grow"></span>
     <button id="undo" class="ghost">Annuler</button><button id="reset" class="ghost">Réinitialiser</button>
@@ -3155,6 +3164,7 @@ function renderDraft() {
   document.querySelectorAll('[data-mode]').forEach(b => b.onclick = () => { if (S.mode === b.dataset.mode) return; S.mode = b.dataset.mode; newDraft(); renderDraft(); });
   document.querySelectorAll('[data-side]').forEach(b => b.onclick = () => { if (S.side === b.dataset.side) return; S.side = b.dataset.side; newDraft(); renderDraft(); });
   const f = $('#fear'); if (f) f.onchange = () => { S.fearless = f.checked; save(); renderDraft(); };
+  const lv = $('#lvl'); if (lv) { lv.oninput = () => { $('#lvlt').textContent = LVL_TXT[+lv.value]; }; lv.onchange = () => { S.lvl = +lv.value / 4; save(); IDC = { k: null, v: null }; renderDraft(); }; }
   const ng = $('#nextg'); if (ng) ng.onclick = () => { D().seq.forEach((st, i) => { if (st.t === 'pick' && D().fill[i] != null && !S.series.locked.includes(D().fill[i])) S.series.locked.push(D().fill[i]); }); S.series.game++; newDraft(); renderDraft(); };
   const rs = $('#resets'); if (rs) rs.onclick = () => { S.series = { game: 1, locked: [] }; newDraft(); renderDraft(); };
   $('#undo').onclick = () => { const i = D().fill.length - 1; if (i < 0) return; D().fill.pop(); delete D().roles[i]; save(); renderDraft(); };
@@ -3218,7 +3228,7 @@ var CLIENT = Math.random().toString(36).slice(2, 10);
 var LIVE_ON = true; try { LIVE_ON = localStorage.getItem('draftTool.live') !== '0'; } catch (e) { }
 var ME = ''; try { ME = localStorage.getItem('draftTool.me') || ''; } catch (e) { }
 var LREF = null, lastLive = '', liveTimer = null, PEERS = [], ROOM = null, pendingRender = false;
-const liveState = () => JSON.stringify({ mode: S.mode, side: S.side, ref: S.ref || 'pro', fearless: S.fearless, series: S.series, target: S.target || null, draft: S.draft });
+const liveState = () => JSON.stringify({ mode: S.mode, side: S.side, lvl: S.lvl || 0, ref: S.ref || 'pro', fearless: S.fearless, series: S.series, target: S.target || null, draft: S.draft });
 function safeRender() {
   const a = document.activeElement;
   if (a && (a.tagName === 'TEXTAREA' || (a.tagName === 'INPUT' && a.type !== 'checkbox'))) { pendingRender = true; return; }
