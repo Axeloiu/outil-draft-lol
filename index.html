@@ -1059,11 +1059,91 @@ function gamePlan(cs, enemyM, styHint) {
   if (F.ad) ROLES.forEach(r => { if (tr(r, 'f') >= 2) addL(r, 'Armure en premier : leurs dégâts sont presque tous AD.'); });
   if (F.ap) ROLES.forEach(r => { if (tr(r, 'f') >= 2) addL(r, 'Résistance magique en premier : leurs dégâts sont presque tous AP.'); });
   if (F.split && vsSplit) addL('top', `${enemyM.top.n} va split : le tenir en side ou appeler l’aide avant de mourir.`);
+  guideLines(cs, enemyM || {}, addL, protect);
   const threats = [];
   if (eid) threats.push(`Leur compo ressemble à : ${ARCH[eid.main]}.`);
   const weak = RD.list.map(k => F[k]);
   const self = SELF.list.filter(k => ['ad', 'ap', 'nowave', 'nofront', 'imm', 'noeng'].includes(k)).map(k => SELF.f[k]);
   return { id, t, obj, focusTxt: focusTxt2, sty, lines, threats, strong, weak, self };
+}
+
+// ===== Règles tirées des guides par rôle d'Axel (Kazewa, Skill Capped, Coach Rogue, Coach K, Shodesu, Mysterias, Chreak) =====
+// Seules les règles qui dépendent de la draft sont reprises ici (le reste est dans les guides). Écrites à la main, non mesurées.
+// Familles de top (Kazewa) : range/spacing, carry, scaler, tank, juggernaut
+function topFamily(c) {
+  if (!c) return null;
+  const cls = c.t || '';
+  if (tv(c, 'h') >= 1 && tv(c, 'g') >= 2 && tv(c, 'm') >= 3) return 'range';       // Vayne top : joue au spacing
+  if (tv(c, 'h') >= 1 || (tv(c, 'c') === 2 && (c.d === 'T' || tv(c, 'f') >= 3) && tv(c, 'e') < 2)) return 'scaler';
+  if (c.d === 'T' || cls.startsWith('Tank')) return 'tank';
+  if (tv(c, 'g') >= 2 || cls.startsWith('Mage')) return 'range';
+  if (tv(c, 'm') >= 2 && (tv(c, 's') >= 2 || cls.includes('Assassin'))) return 'carry';
+  return 'jugg';
+}
+const TOP_FAM = { range: 'range / spacing', carry: 'carry', scaler: 'scaler', tank: 'tank', jugg: 'juggernaut' };
+// Familles de support (Coach K) : engage, catcher, enchanteur, mage
+function supFamily(c) {
+  if (!c) return null;
+  if (tv(c, 'e') >= 2 && tv(c, 'g') === 0) return 'engage';
+  if (tv(c, 'k') >= 3) return 'catcher';
+  if (c.d === 'AP' && tv(c, 'o') >= 2 && tv(c, 'p') < 2) return 'mage';
+  if (tv(c, 'p') >= 2) return 'enchanteur';
+  return tv(c, 'g') >= 2 ? 'mage' : 'engage';
+}
+const EARLY_GANK = new Set(['Shaco', 'Jarvan IV', 'Nunu & Willump', 'Elise', 'Lee Sin', 'Xin Zhao', 'Rek\'Sai', 'Nidalee', 'Rengar', 'Kha\'Zix']);
+const ROAM_MID = new Set(['Twisted Fate', 'Ryze', 'Taliyah', 'Galio', 'Aurelion Sol', 'Sylas', 'Qiyana', 'Katarina', 'Akshan']);
+const OBJ_SMITE = new Set(['Cho\'Gath', 'Kalista']), OBJ_PIT = new Set(['K\'Sante', 'Poppy']), OBJ_SOLO = new Set(['Master Yi', 'Heimerdinger']);
+function guideLines(cs, E, addL, protect) {
+  const C = r => cs[ROLES.indexOf(r)];
+  // --- top : objectif d'early selon la famille, et contre la famille adverse
+  const tf = topFamily(C('top')), etf = topFamily(E.top);
+  if (tf) {
+    const goal = { carry: 'cherche deux ou trois kills en lane', jugg: 'cherche deux ou trois kills en lane', range: 'prends de l’avance au farm et quelques plates', tank: 'survis et protège ta tour', scaler: 'survis et protège ta tour, ton moment vient plus tard' }[tf];
+    addL('top', `Famille ${TOP_FAM[tf]} : ${goal}.` + (etf === 'carry' && E.top ? ` Face à ${E.top.n} (carry), ne pas mourir suffit : sans kill vers 10 minutes, il ne sert plus à grand-chose.` : '') +
+      (tf === 'carry' ? ' En mid game, tu joues la side lane (rythme push puis regroupe).' : tf === 'tank' ? ' En mid game, tu es la frontline du groupe ; ton TP de flanc peut gagner un fight.' : ''));
+  }
+  // --- support : selon la famille, le jungle allié et le carry à suivre
+  const sf = supFamily(C('sup')), jg = C('jgl');
+  if (sf) {
+    const how = { engage: 'Support d’engage : très fort dès que le niveau 2 ou 3 tombe (niveau 2 = première vague + les trois mêlées de la deuxième) ; c’est toi qui lances le all in.',
+      catcher: 'Support de pick : cherche le hook ou le contrôle sur une cible isolée et roam quand ta wave est poussée.',
+      enchanteur: 'Enchanteur : tu gagnes la lane par le poke et le sustain, pas par le all in.',
+      mage: 'Support mage : poke à chaque last hit adverse, garde un sort pour te défendre.' }[sf];
+    addL('sup', how);
+  }
+  if (jg && tv(jg, 'c') === 2) addL('sup', `${jg.n} doit full clear : ward défensive à l’entrée de votre jungle vers 1:20 et aide-le à défendre ses camps.`);
+  // --- ADC : gestion de wave selon notre support, adversaire mage en bot
+  if (C('adc') && sf) {
+    addL('adc', sf === 'engage' ? `Avec ${C('sup').n} (engage) : crash puis laisse la wave revenir vers toi, un shove permanent sous leur tour ne laisse rien à engager.` :
+      sf === 'enchanteur' ? `Avec ${C('sup').n} (enchanteur) : slow push et ne force rien avant tes deux objets si la lane est équilibrée.` :
+      `Avec ${C('sup').n} : slow push, crash, puis poke sous leur tour.`);
+    if (sf === 'engage' || sf === 'catcher') addL('adc', `Si ${C('sup').n} part roam entre le niveau 3 et 8:00 : ne pousse pas, ne meurs pas, warde la rivière.`);
+  }
+  if (C('adc') && E.adc && (E.adc.d === 'AP' || (E.adc.t || '').startsWith('Mage'))) addL('adc', `Face à ${E.adc.n} (mage bot) : prévois de la résistance magique, son support part souvent roamer dès le niveau 3.`);
+  // --- mid : jungle adverse qui gank tôt, mid adverse mêlée / mage / qui roam, rôle en mid game
+  const mid = C('mid'), em = E.mid, ej = E.jgl;
+  if (mid && ej && (EARLY_GANK.has(ej.n) || (tv(ej, 'c') === 0 && (tv(ej, 'd') >= 2 || tv(ej, 'e') >= 2)))) addL('mid', `${ej.n} peut gank tôt : ward aux corbins dès la deuxième wave (sinon dans le buisson du pixel vers 2:30).`);
+  if (mid && em && tv(mid, 'g') >= 2) {
+    if (tv(em, 'g') === 0 || tv(em, 'd') >= 3) addL('mid', `Contre ${em.n} (mêlée ou assassin) : pousse lentement en tapant les sbires distance du fond, trades courts, fais le point avant son niveau 3 et méfie-toi de son niveau 6 ; prévois Zhonya ou Banshee.`);
+    else addL('mid', `Mage contre mage : slow push plutôt que crash sous sa tour, garde une wave neutre au milieu et trade sur ses last hits.`);
+  }
+  if (mid && em && ROAM_MID.has(em.n)) addL('mid', `${em.n} roam beaucoup : ne rase pas ta wave avec tes sorts s’il peut récupérer la sienne et partir ; place-toi entre lui et sa wave et ping sur le portrait de l’allié visé.`);
+  const mg = !mid ? '' : (mid.t || '').startsWith('Mage') && tv(mid, 'm') <= 1 && tv(mid, 'd') < 3 ? 'En mid game : récupère les side waves sans dépasser la rivière ni la première tour, puis reviens au mid.' :
+    tv(mid, 'd') >= 3 ? 'En mid game : pousse une side lane jusqu’à la tour suivante, puis flanque le fight.' :
+    tv(mid, 's') >= 2 ? 'En mid game : reste en side lane jusqu’à forcer une réponse.' : '';
+  if (mg) addL('mid', mg);
+  // --- jungle : cross map ou match selon le jungle adverse, champions qui changent les objectifs
+  if (jg && ej) {
+    const ours = tv(jg, 'c'), theirs = tv(ej, 'c');
+    if (theirs < ours) addL('jgl', `${ej.n} est plus fort tôt que toi : joue en cross map, à l’opposé de lui, plutôt que de contester ses ganks.`);
+    else if (theirs > ours) addL('jgl', `Tu es plus fort tôt que ${ej.n} : fais le même côté que lui, conteste ses ganks et ses objectifs.`);
+  }
+  const en = Object.values(E).filter(Boolean), names = l => en.filter(c => l.has(c.n)).map(c => c.n);
+  const sm = names(OBJ_SMITE), pit = names(OBJ_PIT), solo = names(OBJ_SOLO);
+  if (jg && sm.length) addL('jgl', `${sm.join(', ')} peut voler un objectif sans smite (50/50 perdu) : ne le commence pas s’il est à portée.`);
+  if (jg && pit.length) addL('jgl', `${pit.join(', ')} peut te sortir du pit du nashor : vision et position avant de le lancer.`);
+  if (jg && solo.length) addL('jgl', `${solo.join(', ')} peut faire le nashor seul : garde de la vision sur le pit.`);
+  if (jg) addL('jgl', 'Héraut : sur la première tour mid.');
 }
 
 // ===== Profils des champions, lecture d'une compo et adéquation d'un pick à toute la partie =====
