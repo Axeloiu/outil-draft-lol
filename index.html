@@ -2901,7 +2901,7 @@ function summary() {
   });
   h += `</table><p class="note">Dégâts de notre compo : ${n.AD} AD, ${n.AP} AP, ${n.T} tank ou utilitaire.${(n.AD >= 4 || n.AP >= 4) ? ' Compo très déséquilibrée : l’adversaire peut stacker armure ou résistance magique.' : ''}</p>`;
   if (Object.keys(mine).length === 5 && Object.keys(er).length === 5) h += scoreBox(mine, er);
-  if (Object.keys(mine).length === 5 && Object.keys(er).length === 5) h += itemsBox(mine, er);
+  if (Object.keys(mine).length === 5 && Object.keys(er).length === 5) h += `<p class="note">Objets conseillés pour cette partie : onglet <b>En jeu</b>.</p>`;
   const csArr = ROLES.map(r => mine[r]);
   if (csArr.every(Boolean)) { const plan = gamePlan(csArr, er); h += planHtml(plan, `Plan de jeu \u00b7 ${ARCH[plan.id.main]}`); }
   if (tourn() && S.fearless) h += `<p class="note">Clique sur « Game suivante » pour verrouiller ces 10 champions pour le reste de la série.</p>`;
