@@ -1872,11 +1872,24 @@ function enemyProfile(en) {
 }
 // [objet, types de champions concernés, condition (renvoie la raison affichée, ou rien)]
 const SITU = [
-  [3139, ['MARKSMAN', 'AD_MELEE'], P => P.supp.length && `contre ${P.supp.join(', ')} (suppression)`],
+  [3139, ['MARKSMAN', 'AD_MELEE'], (P, A) => (P.supp.length && `contre ${P.supp.join(', ')} (suppression)`) || (A.has('MARKSMAN') && P.nAP >= 3 && 'beaucoup de dégâts magiques')],
+  // type de dégâts : résistance magique contre une compo surtout AP, armure contre une compo (presque) full AD
+  [3111, ['MAGE', 'AP_ASSA', 'AD_MELEE', 'TANK', 'SUP_TANK', 'ENCHANTER'], P => (P.nAP >= 3 && 'beaucoup de dégâts magiques') || (P.cc >= 3 && 'beaucoup de contrôle en face')],
+  [3047, ['TANK', 'AD_MELEE', 'SUP_TANK', 'MARKSMAN', 'ENCHANTER'], P => (P.nAD >= 4 && 'beaucoup de dégâts physiques') || (P.auto >= 3 && 'beaucoup d’attaques de base')],
+  [3102, ['MAGE', 'AP_ASSA'], P => (P.nAP >= 3 && 'beaucoup de dégâts magiques') || ((P.pick >= 2 || P.burst >= 2) && 'contre les picks et le burst')],
+  [3157, ['MAGE', 'AP_ASSA'], P => (P.nAD >= 4 && 'beaucoup de dégâts physiques') || (P.engage >= 2 && 'contre l’engage et le dive')],
+  [3026, ['MARKSMAN'], P => P.nAD >= 4 && 'beaucoup de dégâts physiques'],
+  [3156, ['AD_MELEE'], P => P.nAP >= 3 && 'beaucoup de dégâts magiques'],
+  [3091, ['MARKSMAN', 'AD_MELEE'], P => P.nAP >= 3 && 'beaucoup de dégâts magiques'],
+  [6333, ['AD_MELEE'], P => (P.nAD >= 4 && 'beaucoup de dégâts physiques') || (P.burst >= 2 && 'contre le burst physique')],
+  [4401, ['TANK'], P => P.nAP >= 3 && 'beaucoup de dégâts magiques'],
+  [2504, ['TANK', 'AD_MELEE'], P => P.nAP >= 3 && 'beaucoup de dégâts magiques'],
+  [3190, ['SUP_TANK'], P => P.nAP >= 3 && 'beaucoup de dégâts magiques'],
+  [8020, ['TANK', 'SUP_TANK'], P => P.nAP >= 3 && 'beaucoup de dégâts magiques'],
+  [3143, ['TANK', 'SUP_TANK'], P => (P.nAD >= 4 && 'beaucoup de dégâts physiques') || (P.auto >= 3 && 'beaucoup d’attaques de base')],
+  [3110, ['TANK', 'SUP_TANK'], P => (P.nAD >= 4 && 'beaucoup de dégâts physiques') || (P.auto >= 3 && 'beaucoup d’attaques de base')],
+  // contrôle, engage, picks, soins, tanks, boucliers
   [3222, ['ENCHANTER'], P => (P.supp.length || P.cc >= 3) && 'beaucoup de contrôle en face'],
-  [3111, ['MAGE', 'AP_ASSA', 'AD_MELEE', 'TANK', 'SUP_TANK', 'ENCHANTER'], P => (P.cc >= 3 && 'beaucoup de contrôle en face') || (P.nAP >= 3 && 'beaucoup de dégâts magiques')],
-  [3157, ['MAGE', 'AP_ASSA'], P => P.engage >= 2 && 'contre l’engage et le dive'],
-  [3102, ['MAGE'], P => (P.pick >= 2 || P.burst >= 2) && 'contre les picks et le burst'],
   [3814, ['AD_MELEE'], P => (P.pick >= 2 || P.burst >= 2) && 'contre les picks et le burst'],
   [6673, ['MARKSMAN'], P => (P.burst >= 2 || P.engage >= 2) && 'contre le burst et le dive'],
   [3033, ['MARKSMAN'], P => P.heal >= 2 && 'beaucoup de soins en face'],
@@ -1886,24 +1899,16 @@ const SITU = [
   [3036, ['MARKSMAN'], P => (P.nT >= 2 || P.tank >= 2) && 'plusieurs tanks en face'],
   [3135, ['MAGE', 'AP_ASSA'], P => (P.nT >= 2 || P.tank >= 2) && 'plusieurs tanks en face'],
   [3071, ['AD_MELEE'], P => (P.nT >= 2 || P.tank >= 2) && 'plusieurs tanks en face'],
-  [6695, ['MARKSMAN', 'AD_MELEE'], P => P.shield >= 2 && 'beaucoup de boucliers en face'],
-  [4401, ['TANK'], P => P.nAP >= 3 && 'beaucoup de dégâts magiques'],
-  [8020, ['TANK', 'SUP_TANK'], P => P.nAP >= 3 && 'beaucoup de dégâts magiques'],
-  [3156, ['AD_MELEE'], P => P.nAP >= 3 && 'beaucoup de dégâts magiques'],
-  [3091, ['MARKSMAN', 'AD_MELEE'], P => P.nAP >= 3 && 'beaucoup de dégâts magiques'],
-  [3047, ['TANK', 'AD_MELEE', 'SUP_TANK'], P => (P.auto >= 3 && 'beaucoup d’attaques de base') || (P.nAD >= 4 && 'beaucoup de dégâts physiques')],
-  [3143, ['TANK', 'SUP_TANK'], P => (P.auto >= 3 && 'beaucoup d’attaques de base') || (P.nAD >= 4 && 'beaucoup de dégâts physiques')],
-  [3110, ['TANK', 'SUP_TANK'], P => (P.auto >= 3 && 'beaucoup d’attaques de base') || (P.nAD >= 4 && 'beaucoup de dégâts physiques')],
-  [6333, ['AD_MELEE'], P => (P.burst >= 2 || P.nAD >= 4) && 'contre le burst physique']
+  [6695, ['MARKSMAN', 'AD_MELEE'], P => P.shield >= 2 && 'beaucoup de boucliers en face']
 ];
-function situationalItems(c, r, enemies, max = 4) {
+function situationalItems(c, r, enemies, max = 5) {
   if (typeof ITEMS === 'undefined' || !ITEMS || !enemies || !enemies.length) return [];
   const A = itemArch(c, r), P = enemyProfile(enemies), rec = itemRecs(c, r, enemies), meas = {};
   if (rec) [...rec.boots, ...rec.legs].forEach(x => meas[x.id] = x.rel);
   const out = [];
   for (const [id, who, cond] of SITU) {
     if (!who.some(w => A.has(w))) continue;
-    const why = cond(P); if (!why) continue;
+    const why = cond(P, A); if (!why) continue;
     const cat = ITEMS.cat[id]; if (!cat) continue;
     out.push({ id, n: cat[0], why, rel: meas[id] });
     if (out.length >= max) break;
@@ -1991,7 +1996,9 @@ function phon(w) {
 }
 const NUMW = { un: '1', deux: '2', trois: '3', quatre: '4', cinq: '5', one: '1', two: '2', three: '3', four: '4', for: '4' };
 // --- État : partagé (adversaires, chronos, horloge, haste) et local (réglages) ---
-var IG = { enemies: {}, timers: {}, clock: null, haste: {}, rev: 0 };
+var IG = { enemies: {}, allies: {}, timers: {}, clock: null, haste: {}, rev: 0 };
+// sections dépliées de l'onglet (gardées d'un rendu à l'autre : l'onglet se redessine à chaque sort annoncé)
+var IG_OPEN = { items: true, champs: false, nick: false };
 var IGL = { delay: 3, voice: true, vol: 0.9, nick: '', mic: false };
 try { Object.assign(IGL, JSON.parse(localStorage.getItem('draftTool.ig') || '{}')); } catch (e) { }
 IGL.mic = false;
@@ -2000,6 +2007,12 @@ try { const s = JSON.parse(localStorage.getItem('draftTool.igs') || 'null'); if 
 var IG_MISS = [];
 var IGREF = null, IG_LAST = '', IG_TICK = null, IG_SPOKEN = {}, IG_SEEN = {}, IG_MENU = null, IG_HEARD = '', IG_FEED = '';
 
+function igAllies() {
+  // nos champions : corrections manuelles d'abord, sinon la dernière draft
+  const out = {}, mine = (typeof ourRoles === 'function' && S.draft) ? ourRoles() : {};
+  ROLES.forEach(r => { const id = IG.allies && IG.allies[r]; const c = id ? BY[id] : (mine[r] || null); if (c) out[r] = c; });
+  return out;
+}
 function igEnemies() {
   // adversaires : corrections manuelles d'abord, sinon la dernière draft
   const out = {}, er = (typeof enemyRoles === 'function' && S.draft) ? enemyRoles().m : {};
@@ -2038,7 +2051,7 @@ function igStart(r, sp, who) {
 function igCancel(r, sp) { igMutate(g => { Object.keys(g.timers).forEach(k => { const t = g.timers[k]; if (t.r === r && (!sp || t.sp === sp)) delete g.timers[k]; }); }); }
 function igShift(k, sec) { igMutate(g => { const t = g.timers[k]; if (t) { t.end += sec * 1000; } }); }
 function igGo() { igMutate(g => { g.clock = nowS(); }); igSay('Horloge lancée'); }
-function igNewGame() { igMutate(g => { g.timers = {}; g.clock = null; g.haste = {}; g.enemies = {}; }); IG_SPOKEN = {}; }
+function igNewGame() { igMutate(g => { g.timers = {}; g.clock = null; g.haste = {}; g.enemies = {}; g.allies = {}; }); IG_SPOKEN = {}; }
 const spokenDur = s => { s = Math.round(s); const m = Math.floor(s / 60), r = s % 60; return m ? `${m} minute${m > 1 ? 's' : ''}${r ? ' ' + r : ''}` : `${r} secondes`; };
 
 // --- Voix (synthèse de Chrome, pas de micro nécessaire) ---
@@ -2290,9 +2303,11 @@ function renderIngame() {
         <small>${hasteOf(r) ? `haste ${hasteOf(r)} · Flash ${mmss(300 * 100 / (100 + hasteOf(r)))}` : ''}</small></div></div>`;
   });
   h += `</div>
-  ${Object.keys(ourRoles()).length ? itemsBox(ourRoles(), en, false) : ''}
-  <details class="cplan"><summary><b>Adversaires</b> (repris de la dernière draft, corrigeables)</summary><div class="igen">${ROLES.map(r => `<label>${RL[r]} <select data-en="${r}"><option value="">${en[r] && !IG.enemies[r] ? esc(en[r].n) + ' (draft)' : '— draft —'}</option>${CH.slice().sort((a, b) => a.n.localeCompare(b.n)).map(c => `<option value="${c.id}" ${IG.enemies[r] === c.id ? 'selected' : ''}>${esc(c.n)}</option>`).join('')}</select></label>`).join('')}<button id="igfromdraft" class="ghost">Reprendre la draft</button></div></details>
-  <details class="cplan"><summary><b>Surnoms</b> (une ligne par champion : <code>Kha'Zix: kaz, kha</code>)</summary><textarea id="ignick" rows="4" style="width:100%">${esc(IGL.nick || '')}</textarea>${(() => { const L = Object.entries(IGL.learn || {}).map(([c, ws]) => `${c} : ${ws.join(', ')}`).concat(Object.entries(IGL.learnSp || {}).map(([w, sp]) => `${w} = ${SPELLS[sp] ? SPELLS[sp].n : sp}`)); return L.length ? `<p class="note">Mots appris : ${esc(L.join(' · '))} <button class="ghost small" id="igunlearn">Oublier</button></p>` : ''; })()}<p class="note">Quand une phrase dite au micro n’est pas comprise, clique sur le bon champion (ou le bon sort) sous la barre de commande : l’outil retient le mot pour la suite. Commandes reconnues : sort puis cible ou l’inverse (« no flash mid », « mid no flash », « no tp Diana »), « annule Diana », « annule flash mid », « go » à 0:00. Sorts : flash, tp, smite (« no smite » seul vise le jungler), ignite (ou embrasement), heal, barrière, exhaust, cleanse, ghost. Temps de recharge (patch 26.21) : Flash et TP 300 s, TP déchaîné après 10:00 de 330 à 240 s selon le niveau (estimé depuis l’horloge), Heal, Exhaust, Cleanse, Ghost 240 s, Ignite et Barrière 180 s, Smite : 2 charges, une charge revient toutes les 90 s (le chrono part quand il n’en a plus) ; haste : Cosmic Insight 18, Lucidité 10, Lucidité pourpre 20.</p></details>`;
+  ${(() => { const al = igAllies(); return Object.keys(al).length ? itemsBox(al, en, IG_OPEN.items, 'igitems') : `<details class="cplan" id="igitems" ${IG_OPEN.items ? 'open' : ''}><summary><b>Objets conseillés</b></summary><p class="note">Indique vos champions dans « Champions de la partie » ci-dessous (ou fais la draft dans l’onglet Draft) pour voir les objets de chacun, avec les situationnels contre leur compo.</p></details>`; })()}
+  ${(() => { const al = igAllies(), sorted = CH.slice().sort((a, b) => a.n.localeCompare(b.n));
+    const row = (kind, cur, man, lab) => `<div class="igen"><b style="min-width:90px">${lab}</b>${ROLES.map(r => `<label>${RL[r]} <select data-${kind}="${r}"><option value="">${cur[r] && !man[r] ? esc(cur[r].n) + ' (draft)' : '— draft —'}</option>${sorted.map(c => `<option value="${c.id}" ${man[r] === c.id ? 'selected' : ''}>${esc(c.n)}</option>`).join('')}</select></label>`).join('')}</div>`;
+    return `<details class="cplan" id="igchamps" ${IG_OPEN.champs ? 'open' : ''}><summary><b>Champions de la partie</b> (repris de la dernière draft, corrigeables)</summary>${row('al', al, IG.allies || {}, 'Nous')}${row('en', en, IG.enemies || {}, 'Adversaires')}<div class="igen"><button id="igfromdraft" class="ghost">Reprendre la draft</button></div></details>`; })()}
+  <details class="cplan" id="ignickd" ${IG_OPEN.nick ? 'open' : ''}><summary><b>Surnoms</b> (une ligne par champion : <code>Kha'Zix: kaz, kha</code>)</summary><textarea id="ignick" rows="4" style="width:100%">${esc(IGL.nick || '')}</textarea>${(() => { const L = Object.entries(IGL.learn || {}).map(([c, ws]) => `${c} : ${ws.join(', ')}`).concat(Object.entries(IGL.learnSp || {}).map(([w, sp]) => `${w} = ${SPELLS[sp] ? SPELLS[sp].n : sp}`)); return L.length ? `<p class="note">Mots appris : ${esc(L.join(' · '))} <button class="ghost small" id="igunlearn">Oublier</button></p>` : ''; })()}<p class="note">Quand une phrase dite au micro n’est pas comprise, clique sur le bon champion (ou le bon sort) sous la barre de commande : l’outil retient le mot pour la suite. Commandes reconnues : sort puis cible ou l’inverse (« no flash mid », « mid no flash », « no tp Diana »), « annule Diana », « annule flash mid », « go » à 0:00. Sorts : flash, tp, smite (« no smite » seul vise le jungler), ignite (ou embrasement), heal, barrière, exhaust, cleanse, ghost. Temps de recharge (patch 26.21) : Flash et TP 300 s, TP déchaîné après 10:00 de 330 à 240 s selon le niveau (estimé depuis l’horloge), Heal, Exhaust, Cleanse, Ghost 240 s, Ignite et Barrière 180 s, Smite : 2 charges, une charge revient toutes les 90 s (le chrono part quand il n’en a plus) ; haste : Cosmic Insight 18, Lucidité 10, Lucidité pourpre 20.</p></details>`;
   $('#ingame').innerHTML = h;
   bindIngame();
 }
@@ -2329,7 +2344,9 @@ function bindIngame() {
   document.querySelectorAll('[data-hc]').forEach(cb => cb.onchange = () => igMutate(g => { const r = cb.dataset.hc; g.haste[r] = Object.assign({}, g.haste[r], { c: cb.checked }); }));
   document.querySelectorAll('[data-hb]').forEach(s => s.onchange = () => igMutate(g => { const r = s.dataset.hb; g.haste[r] = Object.assign({}, g.haste[r], { b: +s.value }); }));
   document.querySelectorAll('[data-en]').forEach(s => s.onchange = () => igMutate(g => { g.enemies = Object.assign({}, g.enemies); if (s.value) g.enemies[s.dataset.en] = +s.value; else delete g.enemies[s.dataset.en]; }));
-  const fd = $('#igfromdraft'); if (fd) fd.onclick = () => igMutate(g => { g.enemies = {}; });
+  document.querySelectorAll('[data-al]').forEach(s => s.onchange = () => igMutate(g => { g.allies = Object.assign({}, g.allies); if (s.value) g.allies[s.dataset.al] = +s.value; else delete g.allies[s.dataset.al]; }));
+  const fd = $('#igfromdraft'); if (fd) fd.onclick = () => igMutate(g => { g.enemies = {}; g.allies = {}; });
+  [['igitems', 'items'], ['igchamps', 'champs'], ['ignickd', 'nick']].forEach(([id, k]) => { const d = document.getElementById(id); if (d) d.ontoggle = () => { IG_OPEN[k] = d.open; }; });
   const nk = $('#ignick'); if (nk) nk.onchange = () => { IGL.nick = nk.value; saveIGL(); };
   document.querySelectorAll('[data-lch]').forEach(b => b.onclick = () => { const [k, id] = b.dataset.lch.split('|'); igLearn(+k, 'champ', +id); });
   document.querySelectorAll('[data-lsp]').forEach(b => b.onclick = () => { const [k, sp] = b.dataset.lsp.split('|'); igLearn(+k, 'spell', sp); });
@@ -2373,7 +2390,7 @@ async function startIngameSync(db) {
       try {
         const o = JSON.parse(d.state); if (o.rev && IG.rev && o.rev < IG.rev && d.by === CLIENT) return;
         const old = IG.timers || {};
-        IG = Object.assign({ enemies: {}, timers: {}, clock: null, haste: {} }, o); IG_LAST = d.state;
+        IG = Object.assign({ enemies: {}, allies: {}, timers: {}, clock: null, haste: {} }, o); IG_LAST = d.state;
         try { localStorage.setItem('draftTool.igs', d.state); } catch (e) { }
         const en = igEnemies();
         Object.entries(IG.timers).forEach(([k, t]) => { if (!old[k] || old[k].at !== t.at) { if (d.by !== CLIENT && nowS() - t.at < 8000) igSay(`${en[t.r] ? en[t.r].n : RL[t.r]} ${SPELLS[t.sp].n}, ${spokenDur((t.end - nowS()) / 1000)}`); } });
@@ -2855,13 +2872,13 @@ function recRow(c, role, why, right, static_) {
 }
 
 // Objets conseillés face à leur compo, pour chacun de nos joueurs
-function itemsBox(mine, er, open = true) {
+function itemsBox(mine, er, open = true, id = '') {
   if (typeof ITEMS === 'undefined' || !ITEMS) return '';
   const en = ROLES.map(r => er[r]).filter(Boolean);
   const ico = x => `<img class="ic" src="https://ddragon.leagueoflegends.com/cdn/${ITEMS.v}/img/item/${x.id}.png" alt="" title="${esc(x.n)}" onerror="this.style.display='none'">`;
   const fmt = x => (x >= 0 ? '+' : '−') + Math.abs(x).toFixed(1).replace('.', ',');
   const cell = x => `<span class="itm" title="${esc(x.n)} : ${fmt(x.rel)} pt par rapport à l’objet moyen sur ce champion${Math.abs(x.vs) >= 0.3 ? ` (dont ${fmt(x.vs)} face à leur compo)` : ''} ; fini par ${Math.round(x.use * 100)} % des joueurs">${ico(x)}<small>${esc(x.n)} ${fmt(x.rel)}</small></span>`;
-  let h = `<details class="cplan" ${open ? 'open' : ''}><summary><b>Objets conseillés</b> <span class="note">· écart de winrate mesuré à valeur en or des objets finis et durée de partie égales, par rapport à l’objet moyen du champion ; objets finis par au moins 200 joueurs de ce champion à ce rôle ; ordre d’achat pas encore mesuré ; non adaptés à la compo adverse (aucun effet mesurable)</span></summary>`;
+  let h = `<details class="cplan" ${id ? `id="${id}"` : ''} ${open ? 'open' : ''}><summary><b>Objets conseillés</b> <span class="note">· en haut, les objets qui gagnent le plus sur ce champion (mesurés, ordre d’achat pas encore mesuré) ; en dessous, les situationnels contre leur compo${en.length ? ` (${en.map(c => esc(c.n)).join(', ')})` : ' (adversaires pas encore connus)'}</span></summary>`;
   ROLES.forEach(r => {
     const c = mine[r]; if (!c) return;
     const x = itemRecs(c, r, en);
