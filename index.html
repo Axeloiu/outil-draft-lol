@@ -832,6 +832,8 @@ function bestComps(limit = 5, o = {}) {
     if (out.length >= limit) break;
   }
   out.forEach(coOf);
+  // pick à garder pour la fin : celui qui gagne le plus à être pris en counter (winrate en counter − en blind, Master+)
+  out.forEach(x => { let g = 0; x.cs.forEach((c, i) => { const r = ROLES[i]; if (mine[r]) return; const d = counterVal(c, r) - blindVal(c, r); if (d > g) { g = d; x.cslot = i; x.cgap = d; } }); });
   return out;
 }
 
@@ -1475,8 +1477,11 @@ function pickShape(c, r) {
 // (la simulation tient déjà compte des counters adverses mesurés et de ce qui reste à picker)
 function idealOrder(ideal) {
   const mine = ourRoles();
-  return ROLES.map((r, i) => ({ r, c: ideal.cs[i] })).filter(o => !mine[o.r] && o.c && available(o.c))
+  const l = ROLES.map((r, i) => ({ r, c: ideal.cs[i] })).filter(o => !mine[o.r] && o.c && available(o.c))
     .map(o => ({ ...o, now: evalPick(o.c, o.r).score })).sort((a, b) => b.now - a.now);
+  // départage sur les simulations longues (le pick qu'on peut garder pour le counter passe naturellement en dernier)
+  const st = curStep(); if (!st || st.t !== 'pick' || !ours(st) || l.length < 2) return l;
+  const rf = refineOrder(l); rf.list.ready = rf.ready; return rf.list;
 }
 // note du pick dans le contexte (duel, compo adverse, méta pro, forme de draft) + urgence (risque de vol ou de ban, rôle que les pros prennent tôt)
 function bestNow(ideal) {
@@ -1485,7 +1490,9 @@ function bestNow(ideal) {
     out.push({ c: o.c, r, star: o.star, tag: o.tag, why: o.why, now: o.score, rank: k });
   }));
   const seen = new Set();
-  return out.sort((a, b) => b.now - a.now).filter(o => !seen.has(o.c.id) && seen.add(o.c.id)).slice(0, 8);
+  const top = out.sort((a, b) => b.now - a.now).filter(o => !seen.has(o.c.id) && seen.add(o.c.id)).slice(0, 8);
+  // les écarts entre ces picks sont souvent sous l'erreur des 200 tirages : on les départage sur les simulations longues
+  return refineOrder(top).list;
 }
 
 // ===== Simulation des fins de draft =====
@@ -1721,8 +1728,50 @@ function simGet(force) {
 function simPump() {
   SIM_T = null; const t0 = Date.now(), sig = simSig();
   while (SIM_Q.length && Date.now() - t0 < 40) { const q = SIM_Q.shift(); if (q.sig !== sig) continue; simValue(q.force); }
-  if (SIM_Q.length) SIM_T = setTimeout(simPump, 0);
+  // puis les simulations longues qui départagent l'ordre des picks, par tranches de 40 ms
+  while (!SIM_Q.length && SIMP_Q.length && Date.now() - t0 < 40) {
+    const q = SIMP_Q[0]; if (q.sig !== sig) { SIMP_Q.shift(); continue; }
+    if (!q.st0) { q.st0 = simStart(); q.a = new Float64Array(SIM_NP); q.i = 0; }
+    while (q.i < SIM_NP && Date.now() - t0 < 40) { q.a[q.i] = simOnce(q.st0, q.force, SIM_SEED + q.i).v; q.i++; }
+    if (q.i >= SIM_NP) { SIMP_Q.shift(); let m = 0; for (const x of q.a) m += x; if (SIMP.size > 500) SIMP.clear(); SIMP.set(q.k, { v: m / SIM_NP, a: q.a }); }
+  }
+  if (SIM_Q.length || SIMP_Q.length) SIM_T = setTimeout(simPump, 0);
   else { SIM_PENDING = false; if (typeof safeRender === 'function' && typeof TAB !== 'undefined' && TAB === 'draft') safeRender(); }
+}
+// Ordre des picks : avec 200 tirages, l'écart entre deux picks pris maintenant a une erreur d'environ 0,08 point de winrate,
+// autant que les écarts eux-mêmes (garder Aurelion Sol ou Vayne pour le counter-pick vaut ~0,1 point). Pour départager,
+// SIM_NP tirages (mêmes nombres aléatoires pour tous les picks, donc écarts appariés : erreur ≈ 0,03 point).
+const SIM_NP = 1000, SIMP = new Map(), SIMP_Q = [];
+function simPrecise(force) {
+  const k = simKey(force); if (SIMP.has(k)) return SIMP.get(k);
+  if (!SIMP_Q.some(q => q.k === k)) SIMP_Q.push({ k, force, sig: simSig() });
+  SIM_PENDING = true; if (!SIM_T) SIM_T = setTimeout(simPump, 0);
+  return null;
+}
+// écart apparié a − b (moyenne et erreur type)
+function simDiff(a, b) {
+  const n = a.a.length; let m = 0, m2 = 0;
+  for (let i = 0; i < n; i++) { const d = a.a[i] - b.a[i]; m += d; m2 += d * d; }
+  m /= n; return { d: m, se: Math.sqrt(Math.max(0, m2 / n - m * m) / n) };
+}
+// Affine le classement d'une liste de picks {c, r, now} sur les simulations longues (si elles sont prêtes).
+// Quand plusieurs picks ne se distinguent pas (écart apparié < 2 erreurs types avec le meilleur restant), on suit la forme
+// de draft des pros : d'abord celui que les pros prennent le plus tôt (position moyenne de pick, ligues majeures 2026 :
+// jungle et ADC tôt, mid et support ensuite, top et picks de counter à la fin).
+function refineOrder(list) {
+  const P = list.map(o => simPrecise({ us: [o.c, o.r] }));
+  if (P.some(x => !x)) return { list, ready: false };
+  const R = list.map((o, k) => ({ ...o, prec: P[k], ps: typeof proSlot === 'function' ? proSlot(o.c, o.r) : 5.5 }));
+  const top = R.reduce((a, b) => b.prec.v > a.prec.v ? b : a), L = [];
+  while (R.length) {
+    const best = R.reduce((a, b) => b.prec.v > a.prec.v ? b : a);
+    const same = R.filter(o => o === best || (() => { const x = simDiff(best.prec, o.prec); return x.d < 2 * x.se; })());
+    const pick = same.reduce((a, b) => b.ps < a.ps ? b : a);
+    pick.tie = same.length > 1; pick.byPro = pick !== best;
+    L.push(pick); R.splice(R.indexOf(pick), 1);
+  }
+  L.forEach(o => { o.dv = o === top ? 0 : simDiff(o.prec, top.prec).d; });
+  return { list: L, ready: true };
 }
 // Liste d'évaluations : valeur simulée pour toutes si elles sont prêtes, sinon gain attendu instantané pour toutes
 function simUse(list) {
@@ -1765,7 +1814,7 @@ function banSimRecs(n) {
   if (!ready) return null;
   return res.filter(x => x.gain > 0).sort((a, b) => b.gain - a.gain).slice(0, n || 8);
 }
-function simReset() { FS.f.clear(); FS.res.clear(); FS.lane.clear(); FS.A.clear(); FS.E.clear(); FS.fl.clear(); FS.fe.clear(); delete SIM_FIELD.mix; SIM_CACHE.clear(); }
+function simReset() { FS.f.clear(); FS.res.clear(); FS.lane.clear(); FS.A.clear(); FS.E.clear(); FS.fl.clear(); FS.fe.clear(); delete SIM_FIELD.mix; SIM_CACHE.clear(); if (typeof SIMP !== "undefined") { SIMP.clear(); SIMP_Q.length = 0; } }
 
 // ===== Objets conseillés une fois la draft terminée =====
 // Effet de chaque objet sur la victoire, mesuré à nombre d'objets finis et durée de partie égaux (data/items.json) :
@@ -2588,7 +2637,7 @@ function compCard(cp, k, withPlan, em) {
   let h = `<div class="ccard ${chosen ? 'best' : ''}"><div class="chead"><b>${STYLES[tags[0]]}</b>${tags[1] ? `<span class="note">+ ${STYLES[tags[1]]}</span>` : ''}<span class="grow"></span>
     ${chosen ? '<span class="tag">compo choisie</span>' : `<button class="on" data-choose="${k}">Partir sur cette compo</button>`}</div>
     ${scoreRow(cp)}
-    <div class="crow">${ROLES.map((r, i) => { const c = cp.cs[i]; const pk = poolRank(r, c); const cf = comfortOf(r, c); const tip = `En blind : ${pct(blindVal(c, r))} · en counter-pick : ${pct(counterVal(c, r))}`; return `<div class="cc" title="${tip}">${img(c)}<span><small>${RL[r]}${cf != null ? ` · ${cf}/10` : ''}${wantOf(r, c) ? ' · ★ envie' : ''}</small><b>${esc(c.n)}</b>${pk < 0 && !ourRoles()[r] ? '<em>hors pool</em>' : ''}${cp.cslot === i ? '<em class="ctag">à garder pour la fin (counter-pick)</em>' : ''}</span></div>`; }).join('')}</div>`;
+    <div class="crow">${ROLES.map((r, i) => { const c = cp.cs[i]; const pk = poolRank(r, c); const cf = comfortOf(r, c); const tip = `En blind : ${pct(blindVal(c, r))} · en counter-pick : ${pct(counterVal(c, r))}`; return `<div class="cc" title="${tip}">${img(c)}<span><small>${RL[r]}${cf != null ? ` · ${cf}/10` : ''}${wantOf(r, c) ? ' · ★ envie' : ''}</small><b>${esc(c.n)}</b>${pk < 0 && !ourRoles()[r] ? '<em>hors pool</em>' : ''}${cp.cslot === i ? `<em class="ctag">à garder pour la fin (counter-pick : +${(cp.cgap * 100).toFixed(1).replace('.', ',')} pts de duel)</em>` : ''}</span></div>`; }).join('')}</div>`;
   const t = cp.co.t;
   h += `<p class="note">${t.AD} AD, ${t.AP} AP, ${t.T} tank · ${t.c < 0.9 ? 'fort tôt' : t.c > 1.3 ? 'fort tard' : 'fort en mid game'}${cp.co.pen.length ? ' · à surveiller : ' + cp.co.pen.join(', ') : ''}</p>`;
   if (withPlan) h += `<details class="cplan"><summary>Plan de jeu</summary>${planHtml(plan)}</details>`;
@@ -2754,7 +2803,7 @@ function recPanel() {
       if (done) return `<div class="rcol done">${head}<div class="ritem picked">${img(done)}<span><b>${esc(done.n)}</b><small>pick\u00e9</small></span></div></div>`;
       return `<div class="rcol">${head}${opts[r].map((o, k) => `<button class="ritem ${o.star ? 'star' : ''}" ${canPick ? `data-pick="${o.c.id}" data-r="${r}"` : 'disabled'} title="${esc(o.why.join(' \u00b7 '))}"><em>${k + 1}</em>${img(o.c)}<span><b>${o.star ? '\u2605 ' : ''}${esc(o.c.n)}</b><small>${o.tag}</small></span></button>`).join('')}</div>`;
     }).join('')}</div>
-      ${order.length && st.t === 'pick' && ours(st) ? `<p class="note">Ordre conseill\u00e9 pour la compo id\u00e9ale : ${order.map(o => `${esc(o.c.n)} (${RL[o.r]})`).join(' \u2192 ')}</p>` : ''}</details>`;
+      ${order.length && st.t === 'pick' && ours(st) ? `<p class="note">Ordre conseill\u00e9 pour la compo id\u00e9ale : ${order.map(o => `${esc(o.c.n)} (${RL[o.r]}${o.dv ? ` ${o.dv.toFixed(2).replace('.', ',').replace('-', '\u2212')}` : ''}${o.ps != null ? ` \u00b7 pros n\u00b0${o.ps.toFixed(1).replace('.', ',')}` : ''})`).join(' \u2192 ')}${order.ready ? ` <span title="Entre parenth\u00e8ses : \u00e9cart de winrate final simul\u00e9 (${SIM_NP} fins de draft) si on le prend maintenant plut\u00f4t que le meilleur, et position moyenne de ce pick chez les pros (1 \u00e0 10). Quand les \u00e9carts sont sous l\u2019erreur de simulation, l\u2019ordre suit celui des pros.">\u00b7 ${order.some(o => o.tie) ? '\u00e9carts trop petits pour trancher : ordre des pros (pick prioritaire, bot t\u00f4t, counters \u00e0 la fin)' : 'ordre mesur\u00e9 par simulation'}</span>` : ' \u00b7 affinage en cours\u2026'}</p>` : ''}</details>`;
   }
   if (ideal && st.t === 'pick' && ours(st)) h += counterBox(roleOptions(ideal));
   h += shapeBox();
