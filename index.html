@@ -1481,9 +1481,10 @@ function mlComp(A, B) {
 // parties pros 2026, niveau des équipes contrôlé par un Elo). Le côté dépend du format de la partie.
 // Côté bleu, en points : en tournoi, mesuré sur les pros ; en flex, mesuré sur nos parties Master+ flex.
 // WR pro 2026 d'un champion, lissé vers 50 % (K parties fictives, choisi par validation chronologique), en points
-// Exception choisie par Axel (règle écrite à la main, non mesurée) : le WR pro d'Aurelion Sol ne compte pas.
+// Règles choisies par Axel (écrites à la main, non mesurées) : le WR pro d'Aurelion Sol ne compte pas, et un WR pro lissé sous
+// 50 % compte comme 50 % (un pick ne perd rien à être moins gagnant chez les pros ; seul l'écart au-dessus de 50 % compte).
 const PRO_WR_SKIP = new Set([136]);
-function proWrPts(c) { if (PRO_WR_SKIP.has(c.id)) return 0; const x = PRO26.wr[c.id]; const n = x ? x[0] : 0, w = x ? x[1] : 0; return ((w + PRO26.K / 2) / (n + PRO26.K) - 0.5) * 100; }
+function proWrPts(c) { if (PRO_WR_SKIP.has(c.id)) return 0; const x = PRO26.wr[c.id]; const n = x ? x[0] : 0, w = x ? x[1] : 0; return Math.max(0, ((w + PRO26.K / 2) / (n + PRO26.K) - 0.5) * 100); }
 // Présence pro d'un pick, en points : mesurée sur nos 21 695 parties flex Master+ (analyses/modele/test_hors_meta_flex.py),
 // à composantes solo queue égales, +0,15 point par unité de log(1 + parties pros 2026 à ce rôle), IC95 +0,06 à +0,24
 // (en solo/duo +0,03, IC95 −0,02 à +0,07 : rien). Appliquée en flex et en tournoi (équipes de 5). Centrée par rôle sur le
@@ -1541,7 +1542,7 @@ function draftScore(ourM, enM) {
   let pa = 0, pb = 0; ROLES.forEach(r => { if (ourM[r]) pa += proWrPts(ourM[r]); if (enM[r]) pb += proWrPts(enM[r]); });
   let qa = 0, qb = 0; ROLES.forEach(r => { if (ourM[r]) qa += presPts(ourM[r], r); if (enM[r]) qb += presPts(enM[r], r); });
   parts.push(['Présence pro des picks à leur rôle (mesurée en flex)', qa - qb, qa, qb]);
-  if (wMp()) parts.push([`WR pro 2026 des champions (lissé, ${Math.round(PRO26.n / 100) / 10} k parties ; Aurelion Sol exclu, choix d’Axel)`, (pa - pb) * wMp(), pa * wMp(), pb * wMp()]);
+  if (wMp()) parts.push([`WR pro 2026 des champions (lissé, ${Math.round(PRO26.n / 100) / 10} k parties ; sous 50 % compté 50 %, Aurelion Sol exclu : choix d’Axel)`, (pa - pb) * wMp(), pa * wMp(), pb * wMp()]);
   const sb = sideBlue();
   parts.push([`Côté ${S.side === 'R' ? 'rouge' : 'bleu'} (${sideLabel()})`, S.side === 'R' ? -sb : sb, null, null]);
   const shA = draftShape(ROLES.map(r => ourM[r]), ROLES.map(r => enM[r])), shB = draftShape(ROLES.map(r => enM[r]), ROLES.map(r => ourM[r]));
@@ -2864,7 +2865,7 @@ function scoreRow(cp) {
     ${chip('Champions', b.force + b.lane, 'Force des champions et duels de lane (contre l’adversaire connu, sinon contre les champions probables), modèle Master+ recalé sur les pros')}
     ${chip('Synergies', b.syn, 'Synergies mesurées entre ces champions et avec ceux déjà pickés')}
     ${chip('Contre eux', b.vs, 'Effets mesurés contre les champions adverses hors lane (connus, sinon probables)')}
-    ${chip('Pro', b.pro, 'WR pro 2026 des champions, lissé, niveau des équipes contrôlé (Aurelion Sol exclu : choix d’Axel, non mesuré), plus leur présence à leur rôle chez les pros (mesurée sur nos parties flex : un pick presque jamais joué en pro à ce rôle perd jusqu’à 1 point face à un pick très joué)', b.nPro ? b.nPro + ' très joués' : '')}
+    ${chip('Pro', b.pro, 'WR pro 2026 des champions, lissé, niveau des équipes contrôlé (sous 50 % compté 50 % et Aurelion Sol exclu : choix d’Axel, non mesuré), plus leur présence à leur rôle chez les pros (mesurée sur nos parties flex : un pick presque jamais joué en pro à ce rôle perd jusqu’à 1 point face à un pick très joué)', b.nPro ? b.nPro + ' très joués' : '')}
     ${chip('Aisance', b.comf, 'Aisance déclarée : (note − 5) × 0,12 point ; hors pool = note 0', b.cf != null ? b.cf.toFixed(1).replace('.', ',') + '/10' : '')}
     ${Math.abs(b.choix) >= 0.3 ? chip('Choix', b.choix, 'Préférences de l’équipe : compo visée, envies du jour, style demandé (ne viennent pas du modèle)') : ''}</div>`;
 }
