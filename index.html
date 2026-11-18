@@ -785,7 +785,7 @@ function bestComps(limit = 5, o = {}) {
   const em = enemyRoles().m;
   const ens = Object.values(em);
   const STY = o.style || (TG && TG.style) || null;
-  const K = MODEL.mult, mt = PRO26.mt;
+  const K = MODEL.mult, mt = wMt();
   const cand = ROLES.map(r => candidates(r, mine, o.arch, o).map(c => ({ c, p: mine[r] ? null : champParts(c, r, mine, em), want: !mine[r] && wantOf(r, c) ? 3 : 0 })));
   if (cand.some(l => !l.length)) return [];
   // synergie d'une paire de nouveaux champions (rôles i < j), mise en cache
@@ -1477,12 +1477,19 @@ function mlComp(A, B) {
 // ===== Score de fin de draft : winrate estimé à partir des stats =====
 // Modèle Master+ (priors u.gg / LoLalytics recalés sur des parties postérieures aux priors) en points de winrate :
 // force des champions + duels au-delà des forces + synergies internes + compo contre compo.
-// Mode unique tendu vers le pro : ce modèle compte × PRO26.mt, plus le WR pro des champions × PRO26.mp (recalage sur les
+// Ce modèle compte × wMt(), plus le WR pro des champions × wMp() : recalage pro en tournoi, calage Master+ en flex (voir wMt).
 // parties pros 2026, niveau des équipes contrôlé par un Elo). Le côté dépend du format de la partie.
 // Côté bleu, en points : en tournoi, mesuré sur les pros ; en flex, mesuré sur nos parties Master+ flex.
 // WR pro 2026 d'un champion, lissé vers 50 % (K parties fictives, choisi par validation chronologique), en points
 function proWrPts(c) { const x = PRO26.wr[c.id]; const n = x ? x[0] : 0, w = x ? x[1] : 0; return ((w + PRO26.K / 2) / (n + PRO26.K) - 0.5) * 100; }
 function sideBlue() { return S.mode === 'tourn' ? PRO26.side : MODEL.side + MODEL.flex; }
+// Poids selon le format de la partie. En tournoi : recalage mesuré sur les parties pros 2026 (PRO26.mt, PRO26.mp).
+// En flex : calage mesuré sur nos parties Master+ (analyses/modele/test_wr_pro_flex.py, 132 860 parties dont 21 695 en
+// flex) : les composantes solo queue comptent × 1 (elles sont déjà recalées par MODEL.mult) et le WR pro ne prédit plus
+// rien (+0,03 point par point, IC95 −0,00 à +0,07, sur toutes les files ; −0,11 en flex ; aucun gain de prédiction) → × 0.
+const FLEX_W = { mt: 1, mp: 0 };
+function wMt() { return S.mode === 'tourn' ? PRO26.mt : FLEX_W.mt; }
+function wMp() { return S.mode === 'tourn' ? PRO26.mp : FLEX_W.mp; }
 function sideLabel() { return S.mode === 'tourn' ? 'mesuré sur les parties pros 2026' : 'mesuré sur les parties flex Master+'; }
 // écart de duel au-delà des forces (prior seul), rétréci selon le nombre de parties : variance réelle des duels ≈ 3 points²
 function laneRes(a, b, r) {
@@ -1506,7 +1513,7 @@ function draftScore(ourM, enM) {
     lanes += x.res; lane.push([r, a, b, x.wr, x.res, x.g]);
   });
   // [libellé, écart, nous, eux] : nous/eux seulement pour ce qui appartient à une compo seule
-  const K = MODEL.mult, mt = PRO26.mt;
+  const K = MODEL.mult, mt = wMt();
   const parts = [
     ['Force des champions (WR Master+ à leur rôle)', (A.champs - B.champs) * K[0], A.champs * K[0], B.champs * K[0]],
     ['Synergies internes (mesurées)', (A.syn - B.syn) * K[1], A.syn * K[1], B.syn * K[1]],
@@ -1519,7 +1526,7 @@ function draftScore(ourM, enM) {
   if (Math.abs(ml) > 1e-9) parts.push([`Ajustements appris (${Math.round(MODEL.n / 1000)} k parties Master+)`, ml, null, null]);
   parts.forEach(p => { p[1] *= mt; if (p[2] != null) p[2] *= mt; if (p[3] != null) p[3] *= mt; });
   let pa = 0, pb = 0; ROLES.forEach(r => { if (ourM[r]) pa += proWrPts(ourM[r]); if (enM[r]) pb += proWrPts(enM[r]); });
-  parts.push([`WR pro 2026 des champions (lissé, ${Math.round(PRO26.n / 100) / 10} k parties)`, (pa - pb) * PRO26.mp, pa * PRO26.mp, pb * PRO26.mp]);
+  if (wMp()) parts.push([`WR pro 2026 des champions (lissé, ${Math.round(PRO26.n / 100) / 10} k parties)`, (pa - pb) * wMp(), pa * wMp(), pb * wMp()]);
   const sb = sideBlue();
   parts.push([`Côté ${S.side === 'R' ? 'rouge' : 'bleu'} (${sideLabel()})`, S.side === 'R' ? -sb : sb, null, null]);
   const shA = draftShape(ROLES.map(r => ourM[r]), ROLES.map(r => enM[r])), shB = draftShape(ROLES.map(r => enM[r]), ROLES.map(r => ourM[r]));
@@ -1697,7 +1704,7 @@ function fastScore(M, O, sideOf) {
   // mode unique : modèle Master+ × mt + WR pro × mp (recalage sur les parties pros 2026), côté selon le format
   let pw = 0; for (const r of ROLES) { if (M[r]) pw += proWrPts(M[r]); if (O[r]) pw -= proWrPts(O[r]); }
   const sb = sideBlue();
-  return PRO26.mt * v + PRO26.mp * pw + (side === 'R' ? -sb : sb);
+  return wMt() * v + wMp() * pw + (side === 'R' ? -sb : sb);
 }
 
 // --- Aisance de nos joueurs : (note − 5) × 0,12 ; hors pool = note 0 ; dans le pool sans note = 5 ---
@@ -1735,7 +1742,7 @@ function fieldE(x, r, rb) {
 // gain attendu d'ajouter x au rôle r, pour la politique de nos picks futurs (adversaires inconnus = moyenne du terrain)
 function addGain(x, r, M, O) { return gainCore(x, r, M, O) + comfortPts(x, r); }
 // même gain sans l'aisance de nos joueurs : c'est aussi ce que l'adversaire cherche à maximiser, de son point de vue
-function gainCore(x, r, M, O) { return PRO26.mt * soloGain(x, r, M, O) + PRO26.mp * proWrPts(x); }
+function gainCore(x, r, M, O) { return wMt() * soloGain(x, r, M, O) + wMp() * proWrPts(x); }
 // gain selon le modèle Master+ seul (sans recalage pro ni WR pro) : validé sur nos parties solo et flex Master+
 function soloGain(x, r, M, O) {
   const K = MODEL.mult; let v = K[0] * fsF(x, r) + chPts(x, r);
@@ -1770,7 +1777,7 @@ function counterRecs(r, metaTop) {
 // --- Valeur d'un champion pour les compos : mêmes termes que addGain, décomposés pour l'affichage ---
 // mine : nos champions déjà pickés (rôle → champion) ; en : champions adverses connus (rôle → champion)
 function champParts(x, r, mine, en) {
-  const K = MODEL.mult, mt = PRO26.mt, p = { force: mt * (K[0] * fsF(x, r) + chPts(x, r)), lane: 0, syn: 0, vs: 0, pro: PRO26.mp * proWrPts(x), comf: comfortPts(x, r) };
+  const K = MODEL.mult, mt = wMt(), p = { force: mt * (K[0] * fsF(x, r) + chPts(x, r)), lane: 0, syn: 0, vs: 0, pro: wMp() * proWrPts(x), comf: comfortPts(x, r) };
   p.lane = mt * (en[r] ? fsLane(x, en[r], r) : fieldLane(x, r));
   for (const rb of ROLES) {
     if (rb === r) continue;
@@ -1781,7 +1788,7 @@ function champParts(x, r, mine, en) {
   return p;
 }
 // valeur d'un champion seul (force + WR pro), pour trier les candidats hors pool
-function champVal(c, r) { return PRO26.mt * (MODEL.mult[0] * fsF(c, r) + chPts(c, r)) + PRO26.mp * proWrPts(c); }
+function champVal(c, r) { return wMt() * (MODEL.mult[0] * fsF(c, r) + chPts(c, r)) + wMp() * proWrPts(c); }
 
 // --- Tirage ---
 function rng(seed) { let a = seed >>> 0; return () => { a = (a + 0x6D2B79F5) >>> 0; let t = a; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }
