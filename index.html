@@ -496,7 +496,7 @@ function pickRecs() {
   });
   const ready = simUse(out.flatMap(g => g.poolEv.concat(g.offAll)));
   out.forEach(g => {
-    g.poolEv.sort((a, b) => b.score - a.score); g.offAll.sort((a, b) => b.score - a.score);
+    g.poolEv.forEach(e => { if (wantOf(e.r, e.c)) e.why.unshift('envie du jour'); }); g.poolEv.sort((a, b) => b.score + wantRank(b.r, b.c) - a.score - wantRank(a.r, a.c)); g.offAll.sort((a, b) => b.score - a.score);
     const bestPool = g.poolEv[0];
     g.offShow = g.offAll.slice(0, 3);
     // ordre des rôles : celui dont le meilleur pick vaut le plus maintenant passe d'abord
@@ -650,6 +650,10 @@ function comfortBonus(r, c, scale) {
   return pk === 0 ? 2.5 : pk === 1 ? 2 : pk === 2 ? 1.5 : 1;
 }
 const wantOf = (r, c) => { const p = playerOf(r); return !!(p && p.want && p.want.includes(c.id)); };
+// Envie du jour : bonus de classement choisi par l'équipe (même valeur dans les compos et dans la draft), jamais compté
+// dans le winrate affiché.
+const WANT_PTS = 3;
+const wantRank = (r, c) => wantOf(r, c) ? WANT_PTS : 0;
 
 function traitsSum(cs) {
   const s = { e: 0, p: 0, k: 0, o: 0, d: 0, f: 0, s: 0, w: 0, c: 0, h: 0, m: 0, g: 0, u: 0, a: 0, x: 0, y: 0, t: 0, n: 0, AD: 0, AP: 0, T: 0, ass: 0 };
@@ -786,7 +790,7 @@ function bestComps(limit = 5, o = {}) {
   const ens = Object.values(em);
   const STY = o.style || (TG && TG.style) || null;
   const K = MODEL.mult, mt = wMt();
-  const cand = ROLES.map(r => candidates(r, mine, o.arch, o).map(c => ({ c, p: mine[r] ? null : champParts(c, r, mine, em), want: !mine[r] && wantOf(r, c) ? 3 : 0 })));
+  const cand = ROLES.map(r => candidates(r, mine, o.arch, o).map(c => ({ c, p: mine[r] ? null : champParts(c, r, mine, em), want: !mine[r] ? wantRank(r, c) : 0 })));
   if (cand.some(l => !l.length)) return [];
   // synergie d'une paire de nouveaux champions (rôles i < j), mise en cache
   const PC = new Map();
@@ -1637,7 +1641,7 @@ const ROLE_FR1 = { T: 'top', J: 'jungle', M: 'mid', B: 'ADC', S: 'support' };
 let IDC = { k: null, v: null };
 function idealNow() {
   const d = D(); if (!d) return null;
-  const k = [d.fill.join(','), JSON.stringify(d.roles), S.side, S.mode, S.target ? S.target.ids.join(',') : '', S.team.map(t => t.pool.join('.') + ':' + JSON.stringify(t.comf || {})).join('|'), OPT.offPool, OPT.proOnly, S.target ? S.target.style : ''].join('#');
+  const k = [d.fill.join(','), JSON.stringify(d.roles), S.side, S.mode, S.target ? S.target.ids.join(',') : '', S.team.map(t => t.pool.join('.') + ':' + JSON.stringify(t.comf || {}) + ':' + (t.want || []).join('.')).join('|'), OPT.offPool, OPT.proOnly, S.target ? S.target.style : ''].join('#');
   if (IDC.k !== k) IDC = { k, v: bestComps(1, { target: true })[0] || null };
   return IDC.v;
 }
@@ -2783,12 +2787,13 @@ function roleOptions(ideal) {
       const e = evalPick(c, r); const pk = poolRank(r, c);
       const pro = proRole(c, r);
       const tag = [pk >= 0 ? 'pool' : 'hors pool', e.opp ? `${pct(e.lane)} vs ${e.opp.n}` : (proRef() && pro.pres >= 0.05 ? `pro ${pct(pro.pick)} pick, ${pct(pro.ban)} ban` : `blind ${pct(e.lane)}`)].join(' \u00b7 ');
-      return { c, score: e.score, inst: e.inst, sim: e.sim, why: e.why, tag, star: ic && c.id === ic.id };
+      const want = wantOf(r, c);
+      return { c, score: e.score, inst: e.inst, sim: e.sim, why: want ? ['envie du jour'].concat(e.why) : e.why, tag: want ? 'envie du jour \u00b7 ' + tag : tag, star: ic && c.id === ic.id, want };
     });
     out[r] = ev;
   });
   const ready = simUse(ROLES.flatMap(r => out[r]));
-  ROLES.forEach(r => { out[r].forEach(o => { if (ready) o.tag += ` \u00b7 WR attendu ${pct((50 + o.score) / 100)}`; }); out[r] = out[r].sort((a, b) => b.score - a.score).slice(0, 5); });
+  ROLES.forEach(r => { out[r].forEach(o => { if (ready) o.tag += ` \u00b7 WR attendu ${pct((50 + o.score) / 100)}`; }); out[r] = out[r].sort((a, b) => b.score + (b.want ? WANT_PTS : 0) - a.score - (a.want ? WANT_PTS : 0)).slice(0, 5); });
   return out;
 }
 // Counters (solo queue) : à côté du classement méta pro, pour chaque rôle dont l'adversaire de lane est connu
