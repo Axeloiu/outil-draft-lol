@@ -302,7 +302,7 @@ function games(c, r) { const x = c.r[r]; return x ? x[1] : 0; }
 // WR Master+ (u.gg) lissé : c'est le prior, tel que le modèle l'a vu à l'entraînement (sans correction apprise)
 function bwr0(c, r) { const x = c.r[r]; return x ? (x[0] + 150) / (x[1] + 300) : 0.47; }
 // correction apprise par champion et rôle (MODEL.ch, en points), comptée À PART dans les scores (jamais dans le calcul attendu des duels)
-function chPts(c, r) { return typeof MODEL !== 'undefined' ? MODEL.ch[c.id + '|' + r] || 0 : 0; }
+function chPts(c, r) { return typeof MODEL !== 'undefined' && mlHas('ch') ? MODEL.ch[c.id + '|' + r] || 0 : 0; }
 // WR affiché : prior + correction
 function bwr(c, r) { return bwr0(c, r) + chPts(c, r) / 100; }
 function pr(c, r) { return games(c, r) / T; }
@@ -1461,12 +1461,15 @@ function mlProf(c) {
 }
 function mlVec(M) { const v = MODEL.pk.map(() => 0); ROLES.forEach(r => { if (M[r]) mlProf(M[r]).forEach((x, i) => v[i] += x); }); return v; }
 // duel de lane : points pour c (rôle r) face à e
-function mlLane(c, e, r) { if (!c || !e) return 0; return c.id < e.id ? (MODEL.du[`${c.id}|${e.id}|${r}`] || 0) : -(MODEL.du[`${e.id}|${c.id}|${r}`] || 0); }
+// tables apprises souvent vides : test rapide avant de construire les clés
+function mlHas(t) { const k = '_n_' + t; if (MODEL[k] == null) MODEL[k] = Object.keys(MODEL[t] || {}).length; return MODEL[k] > 0; }
+function mlLane(c, e, r) { if (!c || !e || !mlHas('du')) return 0; return c.id < e.id ? (MODEL.du[`${c.id}|${e.id}|${r}`] || 0) : -(MODEL.du[`${e.id}|${c.id}|${r}`] || 0); }
 // paire d'alliés (rôles dans l'ordre top, jgl, mid, adc, sup)
-function mlAlly(a, ra, b, rb) { if (!a || !b) return 0; return ROLES.indexOf(ra) < ROLES.indexOf(rb) ? (MODEL.al[`${a.id}|${ra}|${b.id}|${rb}`] || 0) : (MODEL.al[`${b.id}|${rb}|${a.id}|${ra}`] || 0); }
+function mlAlly(a, ra, b, rb) { if (!a || !b || !mlHas('al')) return 0; return ROLES.indexOf(ra) < ROLES.indexOf(rb) ? (MODEL.al[`${a.id}|${ra}|${b.id}|${rb}`] || 0) : (MODEL.al[`${b.id}|${rb}|${a.id}|${ra}`] || 0); }
 function mlAllies(M) { let v = 0; for (let i = 0; i < 5; i++) for (let j = i + 1; j < 5; j++) v += mlAlly(M[ROLES[i]], ROLES[i], M[ROLES[j]], ROLES[j]); return v; }
 // profil de compo : écarts, combinaisons internes, face à face (mêmes termes que le modèle)
 function mlComp(A, B) {
+  if (MODEL._cz == null) MODEL._cz = !(MODEL.comp || []).some(x => x); if (MODEL._cz) return 0;
   const a = mlVec(A), b = mlVec(B), n = a.length, f = [];
   for (let i = 0; i < n; i++) f.push(a[i] - b[i]);
   for (let i = 0; i < n; i++) for (let j = i; j < n; j++) f.push(a[i] * a[j] - b[i] * b[j]);
@@ -1484,18 +1487,24 @@ function mlComp(A, B) {
 // Règles choisies par Axel (écrites à la main, non mesurées) : le WR pro d'Aurelion Sol ne compte pas, et un WR pro lissé sous
 // 50 % compte comme 50 % (un pick ne perd rien à être moins gagnant chez les pros ; seul l'écart au-dessus de 50 % compte).
 const PRO_WR_SKIP = new Set([136]);
-function proWrPts(c) { if (PRO_WR_SKIP.has(c.id)) return 0; const x = PRO26.wr[c.id]; const n = x ? x[0] : 0, w = x ? x[1] : 0; return Math.max(0, ((w + PRO26.K / 2) / (n + PRO26.K) - 0.5) * 100); }
+const PWC = new Map();
+function proWrPts(c) { let v = PWC.get(c.id); if (v == null) { v = proWrRaw(c); PWC.set(c.id, v); } return v; }
+function proWrRaw(c) { if (PRO_WR_SKIP.has(c.id)) return 0; const x = PRO26.wr[c.id]; const n = x ? x[0] : 0, w = x ? x[1] : 0; return Math.max(0, ((w + PRO26.K / 2) / (n + PRO26.K) - 0.5) * 100); }
 // Présence pro d'un pick, en points : mesurée sur nos 21 695 parties flex Master+ (analyses/modele/test_hors_meta_flex.py),
 // à composantes solo queue égales, +0,15 point par unité de log(1 + parties pros 2026 à ce rôle), IC95 +0,06 à +0,24
 // (en solo/duo +0,03, IC95 −0,02 à +0,07 : rien). Appliquée en flex et en tournoi (équipes de 5). Centrée par rôle sur le
 // pick moyen des parties Master+, pour que les compos partielles ne gagnent rien au simple nombre de picks.
 const PRES_X = 1, PRES_K = 0.15, PRES_C = {};
 function presRaw(c, r) { return Math.log1p((PRO26.freq[r] || {})[c.id] || 0); }
+const PRESC = new Map();
 function presPts(c, r) {
+  const k = c.id * 5 + ROLES.indexOf(r); const cv = PRESC.get(k); if (cv != null) return cv;
   if (PRES_C[r] == null) { let s = 0, w = 0; CH.forEach(x => { const g = x.r[r] ? x.r[r][1] : 0; if (g) { s += g * presRaw(x, r); w += g; } }); PRES_C[r] = w ? s / w : 0; }
-  return PRES_X * PRES_K * (presRaw(c, r) - PRES_C[r]);
+  const v = PRES_X * PRES_K * (presRaw(c, r) - PRES_C[r]); PRESC.set(k, v); return v;
 }
-function sideBlue() { return S.mode === 'tourn' ? PRO26.side : MODEL.side + MODEL.flex; }
+// Côté : retiré du score à la demande d'Axel (en flex le côté est imposé, et l'effet ne change aucun classement de picks).
+// Mesures pour mémoire : +2,85 points pour le bleu chez les pros (PRO26.side), MODEL.side + MODEL.flex en flex Master+.
+function sideBlue() { return 0; }
 // Poids du modèle, en flex comme en tournoi : calage sur les parties pros 2026 (PRO26.mt ≈ 0,43 pour les composantes solo
 // queue, PRO26.mp ≈ 0,56 pour le WR pro des champions), choix d'Axel. Mesure pour mémoire (analyses/modele/test_wr_pro_flex.py,
 // 132 860 parties Master+ dont 21 695 en flex) : sur nos parties, le WR pro ne prédit rien (+0,03 point par point, IC95 −0,00
@@ -1543,8 +1552,6 @@ function draftScore(ourM, enM) {
   let qa = 0, qb = 0; ROLES.forEach(r => { if (ourM[r]) qa += presPts(ourM[r], r); if (enM[r]) qb += presPts(enM[r], r); });
   parts.push(['Présence pro des picks à leur rôle (mesurée en flex)', qa - qb, qa, qb]);
   if (wMp()) parts.push([`WR pro 2026 des champions (lissé, ${Math.round(PRO26.n / 100) / 10} k parties ; sous 50 % compté 50 %, Aurelion Sol exclu : choix d’Axel)`, (pa - pb) * wMp(), pa * wMp(), pb * wMp()]);
-  const sb = sideBlue();
-  parts.push([`Côté ${S.side === 'R' ? 'rouge' : 'bleu'} (${sideLabel()})`, S.side === 'R' ? -sb : sb, null, null]);
   const shA = draftShape(ROLES.map(r => ourM[r]), ROLES.map(r => enM[r])), shB = draftShape(ROLES.map(r => enM[r]), ROLES.map(r => ourM[r]));
   const total = parts.reduce((s, p) => s + p[1], 0);
   const wr = Math.max(20, Math.min(80, 50 + total));
@@ -1689,17 +1696,19 @@ function bestNow(ideal) {
 // --- Score rapide : valeurs par champion et par paire, mises en cache ---
 const FS = { f: new Map(), res: new Map(), lane: new Map(), A: new Map(), E: new Map(), fl: new Map(), fe: new Map() };
 // force a priori (u.gg lissé, biais de sélection retiré), en points ; la correction apprise chPts est ajoutée à part
-function fsF(c, r) { const k = c.id + '|' + r; let v = FS.f.get(k); if (v == null) { v = (bwr0(c, r) - selBias(c, r) - 0.5) * 100; FS.f.set(k, v); } return v; }
+// clés numériques (plus rapides que des chaînes) : rôle = indice 0 à 4, champion = id < 4096
+const RIX = { top: 0, jgl: 1, mid: 2, adc: 3, sup: 4 };
+function fsF(c, r) { const k = c.id * 5 + RIX[r]; let v = FS.f.get(k); if (v == null) { v = (bwr0(c, r) - selBias(c, r) - 0.5) * 100; FS.f.set(k, v); } return v; }
 // écart de duel au-delà des forces, prior seul (c'est aussi la mesure sur laquelle κ a été estimé)
-function fsRes(a, b, r) { const k = a.id + '|' + b.id + '|' + r; let v = FS.res.get(k); if (v == null) { v = laneRes(a, b, r).res; FS.res.set(k, v); } return v; }
+function fsRes(a, b, r) { const k = (a.id * 4096 + b.id) * 5 + RIX[r]; let v = FS.res.get(k); if (v == null) { v = laneRes(a, b, r).res; FS.res.set(k, v); } return v; }
 // duel de lane vu de a (même calcul que draftScore, poids recalé + correction apprise)
 function fsLane(a, b, r) {
-  const k = a.id + '|' + b.id + '|' + r; let v = FS.lane.get(k);
+  const k = (a.id * 4096 + b.id) * 5 + RIX[r]; let v = FS.lane.get(k);
   if (v == null) { v = fsRes(a, b, r) * MODEL.mult[2] + mlLane(a, b, r); FS.lane.set(k, v); }
   return v;
 }
 function fsPair(s, a, ra, b, rb) {
-  const M = FS[s], k = a.id + '|' + ra + '|' + b.id + '|' + rb; let v = M.get(k);
+  const M = FS[s], k = ((a.id * 5 + RIX[ra]) * 4096 + b.id) * 5 + RIX[rb]; let v = M.get(k);
   if (v == null) { v = styleVal(s, a, b).v + pairVal(s, a, LLANE[ra], b, LLANE[rb]); M.set(k, v); }
   return v;
 }
@@ -1746,12 +1755,12 @@ function simField() {
 }
 // valeur attendue d'un duel / d'une interaction contre un adversaire inconnu à ce rôle
 function fieldLane(x, r) {
-  const k = x.id + '|' + r; let v = FS.fl.get(k);
+  const k = x.id * 5 + RIX[r]; let v = FS.fl.get(k);
   if (v == null) { v = 0; let sw = 0; simField()[r].forEach(o => { if (o.c.id === x.id) return; v += o.p * fsLane(x, o.c, r); sw += o.p; }); v /= sw || 1; FS.fl.set(k, v); }
   return v;
 }
 function fieldE(x, r, rb) {
-  const k = x.id + '|' + r + '|' + rb; let v = FS.fe.get(k);
+  const k = (x.id * 5 + RIX[r]) * 5 + RIX[rb]; let v = FS.fe.get(k);
   if (v == null) { v = 0; let sw = 0; simField()[rb].forEach(o => { if (o.c.id === x.id) return; v += o.p * (fsPair('E', x, r, o.c, rb) - fsPair('E', o.c, rb, x, r)); sw += o.p; }); v /= sw || 1; FS.fe.set(k, v); }
   return v;
 }
@@ -1881,7 +1890,8 @@ function simOnce(st0, force, sample) {
   for (const r of ROLES) if (M[r]) v += comfortPts(M[r], r);
   return { v, M, O };
 }
-const SIM_N = 200;
+// 100 tirages (au lieu de 200) : la draft flex laisse 30 s pour deux picks ; l'ordre final est départagé par SIM_NP
+const SIM_N = 100;
 // option de test : 'terrain' fait jouer notre équipe comme le terrain adverse (sert à vérifier le modèle du monde de la simulation)
 const SIM_OPT = { us: 'outil' };
 let SIM_SEED = 1000;
@@ -1924,8 +1934,8 @@ function simPump() {
 }
 // Ordre des picks : avec 200 tirages, l'écart entre deux picks pris maintenant a une erreur d'environ 0,08 point de winrate,
 // autant que les écarts eux-mêmes (garder Aurelion Sol ou Vayne pour le counter-pick vaut ~0,1 point). Pour départager,
-// SIM_NP tirages (mêmes nombres aléatoires pour tous les picks, donc écarts appariés : erreur ≈ 0,03 point).
-const SIM_NP = 1000, SIMP = new Map(), SIMP_Q = [];
+// SIM_NP tirages (mêmes nombres aléatoires pour tous les picks, donc écarts appariés : erreur ≈ 0,05 point avec 400).
+const SIM_NP = 400, SIMP = new Map(), SIMP_Q = [];
 function simPrecise(force) {
   const k = simKey(force); if (SIMP.has(k)) return SIMP.get(k);
   if (!SIMP_Q.some(q => q.k === k)) SIMP_Q.push({ k, force, sig: simSig() });
