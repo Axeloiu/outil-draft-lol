@@ -384,8 +384,14 @@ const D = () => S.draft;
 const ours = st => st.s === S.side;
 function curStep() { return D().seq[D().fill.length]; }
 function used() { return new Set(D().fill.filter(x => x != null)); }
-function locked() { return new Set(S.fearless ? S.series.locked : []); }
-function available(c) { return !used().has(c.id) && !locked().has(c.id); }
+// Fearless. Tournoi : les champions des games précédentes sont interdits aux deux équipes (règle de la série).
+// Flex : on ne verrouille que NOS picks précédents, pour nous seulement (l'équipe d'en face change, elle peut les prendre).
+function locked() { return new Set(S.fearless && S.mode === 'tourn' ? S.series.locked : []); }
+function lockedUs() { return new Set(S.fearless && S.mode !== 'tourn' ? S.series.locked : []); }
+// disponible pour l'adversaire (picks et bans adverses, menaces)
+function availableAny(c) { return !used().has(c.id) && !locked().has(c.id); }
+// disponible pour nous (tous nos conseils, compos, simulations de nos picks)
+function available(c) { return availableAny(c) && !lockedUs().has(c.id); }
 function picksOf(side) {
   const out = [];
   D().seq.forEach((st, i) => { if (st.t === 'pick' && st.s === side && D().fill[i] != null) out.push({ i, c: BY[D().fill[i]] }); });
@@ -431,7 +437,7 @@ const tourn = () => S.mode === 'tourn';
 
 // Candidats adverses probables dans un rôle
 function enemyCands(r, exclude) {
-  return CH.filter(c => available(c) && !(exclude && exclude.has(c.id)) && viable(c, r) && pr(c, r) >= 0.004)
+  return CH.filter(c => availableAny(c) && !(exclude && exclude.has(c.id)) && viable(c, r) && pr(c, r) >= 0.004)
     .sort((a, b) => pr(b, r) - pr(a, r)).slice(0, 30);
 }
 // Sécurité en blind : winrate attendu contre les picks probables et contre les pires counters dispos
@@ -516,7 +522,7 @@ function banRecs() {
   const wMeta = redFirst ? 1.3 : 1.0, wCnt = redFirst ? 0.8 : 1.2;
   const res = [];
   CH.forEach(x => {
-    if (!available(x)) return;
+    if (!availableAny(x)) return;
     if (inAnyPool(x)) return;
     let best = null;
     ROLES.forEach(r => {
@@ -565,7 +571,7 @@ function enemyPickRecs() {
   const d = D(); let k = 0, slotNext = 5.5;
   if (d) for (let i = 0; i < d.seq.length; i++) { if (d.seq[i].t !== 'pick') continue; k++; if (i >= d.fill.length && !ours(d.seq[i])) { slotNext = k; break; } }
   ROLES.filter(r => !er[r]).forEach(r => {
-    CH.filter(c => available(c) && viableP(c, r)).forEach(c => {
+    CH.filter(c => availableAny(c) && viableP(c, r)).forEach(c => {
       const pro = proRole(c, r);
       let sc = power(c, r, proRef()) * (0.4 + 0.6 * Math.max(share(c, r), pro.pick > 0 ? 0.8 : 0)) * Math.sqrt(Math.min(1, (pr(c, r) + banRate(c) * share(c, r) + PROW() * 0.5 * pro.pres) / 0.05));
       let why = `${RL[r]} : ${pct(bwr(c, r))} de WR, ${pct(pr(c, r))} de pick`;
@@ -857,7 +863,7 @@ function compBans(ideal, phase) {
   const ourM = {}; ROLES.forEach((r, i) => { const x = mine[r] || (ideal && ideal.cs[i]); if (x) ourM[r] = x; });
   const keep = new Set(Object.values(ourM).map(x => x.id));
   CH.forEach(x => {
-    if (!available(x) || inAnyPool(x) || keep.has(x.id)) return;
+    if (!availableAny(x) || inAnyPool(x) || keep.has(x.id)) return;
     let best = null;
     ROLES.forEach(r => {
       if (em[r] || !viableP(x, r)) return;
@@ -1641,7 +1647,7 @@ const ROLE_FR1 = { T: 'top', J: 'jungle', M: 'mid', B: 'ADC', S: 'support' };
 let IDC = { k: null, v: null };
 function idealNow() {
   const d = D(); if (!d) return null;
-  const k = [d.fill.join(','), JSON.stringify(d.roles), [...locked()].join('.'), S.side, S.mode, S.target ? S.target.ids.join(',') : '', S.team.map(t => t.pool.join('.') + ':' + JSON.stringify(t.comf || {}) + ':' + (t.want || []).join('.')).join('|'), OPT.offPool, OPT.proOnly, S.target ? S.target.style : ''].join('#');
+  const k = [d.fill.join(','), JSON.stringify(d.roles), [...locked(), ...lockedUs()].join('.'), S.side, S.mode, S.target ? S.target.ids.join(',') : '', S.team.map(t => t.pool.join('.') + ':' + JSON.stringify(t.comf || {}) + ':' + (t.want || []).join('.')).join('|'), OPT.offPool, OPT.proOnly, S.target ? S.target.style : ''].join('#');
   if (IDC.k !== k) IDC = { k, v: bestComps(1, { target: true })[0] || null };
   return IDC.v;
 }
@@ -1850,9 +1856,10 @@ function drawRole(open, pos, key) {
   }
   return best;
 }
-function ourOptions(r, taken) {
-  const p = playerOf(r), pool = p ? p.pool.map(id => BY[id]).filter(c => c && !taken.has(c.id)) : [];
-  return pool.length ? pool : simField()[r].slice(0, 6).map(o => o.c).filter(c => !taken.has(c.id));
+function ourOptions(r, taken, lu) {
+  const ok = c => !taken.has(c.id) && !(lu && lu.has(c.id));
+  const p = playerOf(r), pool = p ? p.pool.map(id => BY[id]).filter(c => c && ok(c)) : [];
+  return pool.length ? pool : simField()[r].slice(0, 6).map(o => o.c).filter(ok);
 }
 
 // État de départ : nos picks et leurs picks connus, étapes de pick restantes
@@ -1863,7 +1870,7 @@ function simStart() {
   let np = 0;
   D().seq.forEach((st, i) => { if (st.t !== 'pick') return; np++; if (i >= D().fill.length) steps.push({ who: st.s === S.side ? 'us' : 'them', pos: np }); });
   // picks déjà faits sans rôle choisi : on les ignore dans la simulation
-  return { M, O, taken, steps };
+  return { M, O, taken, steps, lu: lockedUs() };
 }
 // Une fin de draft. force : { us: [champ, rôle] } pour notre prochain pick, { them: [champ, rôle] } pour leur prochain
 function simOnce(st0, force, sample) {
@@ -1880,7 +1887,7 @@ function simOnce(st0, force, sample) {
         if (c) { M[r] = c; taken.add(c.id); } continue;
       }
       let best = null, bv = -1e9;
-      for (const r of open) for (const c of ourOptions(r, taken)) { const g = addGain(c, r, M, O); if (g > bv) { bv = g; best = [c, r]; } }
+      for (const r of open) for (const c of ourOptions(r, taken, st0.lu)) { const g = addGain(c, r, M, O); if (g > bv) { bv = g; best = [c, r]; } }
       if (best) { M[best[1]] = best[0]; taken.add(best[0].id); }
     } else {
       const open = ROLES.filter(r => !O[r]); if (!open.length) continue;
@@ -1899,7 +1906,7 @@ const SIM_N = 200;
 const SIM_OPT = { us: 'outil' };
 let SIM_SEED = 1000;
 const SIM_CACHE = new Map();
-function simSig() { return JSON.stringify([S.side, S.mode, D().fill, D().roles, [...locked()], S.team.map(p => [p.pool, p.comf || null])]); }
+function simSig() { return JSON.stringify([S.side, S.mode, D().fill, D().roles, [...locked()], [...lockedUs()], S.team.map(p => [p.pool, p.comf || null])]); }
 function simKey(force) { return simSig() + JSON.stringify(force ? [force.us && [force.us[0].id, force.us[1]], force.them && [force.them[0].id, force.them[1]], force.ban && force.ban.id] : 0); }
 function simValue(force) {
   const sig = simKey(force);
@@ -2968,7 +2975,7 @@ function targetBox(where) {
   if (!S.target) return '';
   const st = id => { const i = D() ? D().fill.indexOf(id) : -1;
     if (i >= 0) { const s = D().seq[i]; if (s.t === 'ban') return ['banni', 'gone']; return ours(s) ? ['pické', 'ok'] : ['pris en face', 'gone']; }
-    if (locked().has(id)) return ['verrouillé (fearless)', 'gone'];
+    if (locked().has(id) || lockedUs().has(id)) return ['verrouillé (fearless)', 'gone'];
     return ['dispo', '']; };
   const lab = S.target.style ? STYLES[S.target.style] : ARCH[S.target.arch];
   return `<div class="read target"><h4>Compo choisie : ${lab}${where === 'draft' ? ' <span class="note">(à changer dans l’onglet Compos)</span>' : ''}</h4><div class="trow">${ROLES.map((r, i) => { const c = BY[S.target.ids[i]]; const [l, cls] = st(c.id); return `<span class="tch ${cls}">${img(c)}<span><small>${RL[r]} · ${l}</small><b>${esc(c.n)}</b></span></span>`; }).join('')}</div>
@@ -3059,7 +3066,7 @@ function stepLabel(st) {
 
 function applyChamp(id, role) {
   const st = curStep(); if (!st) return;
-  const c = BY[id]; if (!c || !available(c)) return;
+  const c = BY[id]; if (!c || !(st.t === 'pick' && ours(st) ? available(c) : availableAny(c))) return;
   const i = D().fill.length;
   D().fill.push(id);
   if (st.t === 'pick' && ours(st)) {
@@ -3196,7 +3203,7 @@ function summary() {
   if (Object.keys(mine).length === 5 && Object.keys(er).length === 5) h += `<p class="note">Objets conseillés pour cette partie : onglet <b>En jeu</b>.</p>`;
   const csArr = ROLES.map(r => mine[r]);
   if (csArr.every(Boolean)) { const plan = gamePlan(csArr, er); h += planHtml(plan, `Plan de jeu \u00b7 ${ARCH[plan.id.main]}`); }
-  if (S.fearless) h += `<p class="note">Clique sur « Game suivante » pour verrouiller ces 10 champions pour le reste de la série.</p>`;
+  if (S.fearless) h += `<p class="note">Clique sur « Game suivante » pour verrouiller ${tourn() ? 'ces 10 champions pour les deux équipes' : 'nos 5 champions (pour nous seulement)'} pour le reste de la série.</p>`;
   return h;
 }
 
@@ -3225,7 +3232,7 @@ function scoreBox(mine, er) {
 
 function grid() {
   const roleBtns = ['all', ...ROLES].map(r => `<button data-gr="${r}" class="${GRID_ROLE === r ? 'on' : ''}">${r === 'all' ? 'Tous' : RL[r]}</button>`).join('');
-  const lk = locked(), u = used();
+  const st0 = curStep(), lk = new Set([...locked(), ...(st0 && st0.t === 'pick' && ours(st0) ? lockedUs() : [])]), u = used();
   const q = GRID_Q.toLowerCase();
   const list = CH.filter(c => (!q || c.n.toLowerCase().includes(q) || c.k.toLowerCase().includes(q)) && (GRID_ROLE === 'all' || viable(c, GRID_ROLE)))
     .sort((a, b) => GRID_ROLE === 'all' ? a.n.localeCompare(b.n) : games(b, GRID_ROLE) - games(a, GRID_ROLE));
@@ -3240,7 +3247,7 @@ function renderDraft() {
   document.querySelectorAll('[data-mode]').forEach(b => b.onclick = () => { if (S.mode === b.dataset.mode) return; S.mode = b.dataset.mode; newDraft(); renderDraft(); });
   document.querySelectorAll('[data-side]').forEach(b => b.onclick = () => { if (S.side === b.dataset.side) return; S.side = b.dataset.side; newDraft(); renderDraft(); });
   const f = $('#fear'); if (f) f.onchange = () => { S.fearless = f.checked; save(); renderDraft(); };
-  const ng = $('#nextg'); if (ng) ng.onclick = () => { D().seq.forEach((st, i) => { if (st.t === 'pick' && D().fill[i] != null && !S.series.locked.includes(D().fill[i])) S.series.locked.push(D().fill[i]); }); S.series.game++; newDraft(); renderDraft(); };
+  const ng = $('#nextg'); if (ng) ng.onclick = () => { D().seq.forEach((st, i) => { if (st.t === 'pick' && (tourn() || ours(st)) && D().fill[i] != null && !S.series.locked.includes(D().fill[i])) S.series.locked.push(D().fill[i]); }); S.series.game++; newDraft(); renderDraft(); };
   const rs = $('#resets'); if (rs) rs.onclick = () => { S.series = { game: 1, locked: [] }; newDraft(); renderDraft(); };
   $('#undo').onclick = () => { const i = D().fill.length - 1; if (i < 0) return; D().fill.pop(); delete D().roles[i]; save(); renderDraft(); };
   $('#reset').onclick = () => { newDraft(); renderDraft(); };
