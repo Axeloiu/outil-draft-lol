@@ -3113,19 +3113,7 @@ function recPanel() {
   if (!st) return summary();
   let h = `<div class="stepbar">Étape ${D().fill.length + 1}/${D().seq.length} · ${st.ph} · <b>${stepLabel(st)}</b></div>`;
   const ideal = bestComps(1, { target: true })[0];
-  h += targetBox('draft');
-  if (ideal) {
-    const order = idealOrder(ideal);
-    const canPick = st.t === 'pick' && ours(st);
-    const opts = roleOptions(ideal);
-    h += `<details class="ideal" open><summary><b>${S.target ? 'Compo vis\u00e9e \u00e0 ce stade' : 'Compo id\u00e9ale \u00e0 ce stade'}</b> \u00b7 ${S.target && S.target.style ? STYLES[S.target.style] : STYLES[styleTags(ideal.cs)[0]]} <span class="note">\u00b7 5 choix par r\u00f4le, class\u00e9s par winrate final simul\u00e9 (aisance comprise), \u2605 = celui de la compo id\u00e9ale${SIM_PENDING ? ' \u00b7 simulations en cours\u2026' : ''}</span></summary><div class="ropt">${ROLES.map((r, i) => {
-      const done = ourRoles()[r], p = playerOf(r);
-      const head = `<div class="rhead"><b>${RL[r]}</b>${p.name ? ` <small>${esc(p.name)}</small>` : ''}</div>`;
-      if (done) return `<div class="rcol done">${head}<div class="ritem picked">${img(done)}<span><b>${esc(done.n)}</b><small>pick\u00e9</small></span></div></div>`;
-      return `<div class="rcol">${head}${opts[r].map((o, k) => `<button class="ritem ${o.star ? 'star' : ''}" ${canPick ? `data-pick="${o.c.id}" data-r="${r}"` : 'disabled'} title="${esc(o.why.join(' \u00b7 '))}"><em>${k + 1}</em>${img(o.c)}<span><b>${o.star ? '\u2605 ' : ''}${esc(o.c.n)}</b><small>${o.tag}</small></span></button>`).join('')}</div>`;
-    }).join('')}</div>
-      ${order.length && st.t === 'pick' && ours(st) ? `<p class="note">Ordre conseill\u00e9 pour la compo id\u00e9ale : ${order.map(o => `${esc(o.c.n)} (${RL[o.r]}${o.dv ? ` ${o.dv.toFixed(2).replace('.', ',').replace('-', '\u2212')}` : ''}${o.ps != null ? ` \u00b7 pros n\u00b0${o.ps.toFixed(1).replace('.', ',')}` : ''})`).join(' \u2192 ')}${order.ready ? ` <span title="Entre parenth\u00e8ses : \u00e9cart de winrate final simul\u00e9 (${SIM_NP} fins de draft) si on le prend maintenant plut\u00f4t que le meilleur, et position moyenne de ce pick chez les pros (1 \u00e0 10). Quand les \u00e9carts sont sous l\u2019erreur de simulation, l\u2019ordre suit celui des pros.">\u00b7 ${order.some(o => o.tie) ? '\u00e9carts trop petits pour trancher : ordre des pros (pick prioritaire, bot t\u00f4t, counters \u00e0 la fin)' : 'ordre mesur\u00e9 par simulation'}</span>` : ' \u00b7 affinage en cours\u2026'}</p>` : ''}</details>`;
-  }
+  // (tableau « compo visée » et 5 options par rôle retiré de la draft pour l'alléger : il reste dans l'onglet Compos)
   if (ideal && st.t === 'pick' && ours(st)) h += counterBox(roleOptions(ideal));
   h += shapeBox();
   h += readBox();
