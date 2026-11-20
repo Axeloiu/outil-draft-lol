@@ -154,7 +154,10 @@ details.ideal summary{cursor:pointer}
 .frise .note{margin:2px 0 0}
 .frl{margin:4px 0 0;padding-left:4px;list-style:none;font-size:12.5px}.frl li{margin:2px 0}.frl li b{display:inline-block;min-width:38px}
 .frl li.fr-top b{color:var(--blue)}.frl li.fr-bot b{color:var(--gold)}.frl li.next{background:rgba(239,68,68,.12);border-radius:4px}.frl li.past{opacity:.55}
-.pg-bilan,.pg-detail{border:1px solid var(--line);border-radius:8px;padding:10px 12px;margin:10px 0}
+.pg-bilan,.pg-detail,.pg-plan{border:1px solid var(--line);border-radius:8px;padding:10px 12px;margin:10px 0}
+.pg-plan h3{margin:0 0 6px;font-size:15px}.pg-plan h4{margin:10px 0 4px;font-size:13px}
+.pg-pj{display:grid;grid-template-columns:repeat(auto-fill,minmax(480px,1fr));gap:10px}.pg-plan a{color:var(--gold)}.pg-j td:nth-child(n+2){white-space:nowrap}.pg-j{border:1px solid var(--line);border-radius:6px;padding:6px 8px}.pg-j table{width:100%}.pg-j details{margin-top:4px}.pg-j ul{margin:4px 0;padding-left:18px}
+.pg-et{font-size:12px;padding:1px 6px;border-radius:10px;white-space:nowrap}.pg-et.ok{background:#4caf5033;color:#4caf50}.pg-et.prog{background:#c8aa6e33;color:var(--gold)}.pg-et.ko{background:#e5737333;color:#e57373}.pg-et.attente{opacity:.7}
 .pg-bilan h3,.pg-detail h3{margin:0 0 6px;font-size:15px}.pg-detail h4,.pg-bilan h4{margin:10px 0 4px;font-size:13px}
 .pg-2{display:grid;grid-template-columns:1fr 1fr;gap:12px}@media(max-width:800px){.pg-2{grid-template-columns:1fr}}
 .pg-good li::marker{color:#4caf50}.pg-bad li::marker{color:#e57373}.pg-good,.pg-bad{margin:0;padding-left:18px}.pg-good li,.pg-bad li{margin:3px 0}
@@ -2861,6 +2864,134 @@ function pgBilan(list) {
   return { T, P, good, bad, avg };
 }
 
+// ===== Plan de progression (doc du 20 novembre 2026) =====
+// Départs : mesurés sur nos 39 parties d'équipe au 20/11 (figés ici, parce que la fenêtre de 30 jours de la collecte
+// va les faire sortir). Cibles et exercices : choisis à la main dans le plan, à partir des repères Master+, des repères
+// publiés (vision, pinks, participation aux kills) et de nos guides de lane. Le suivi compte les parties jouées depuis
+// le début du plan, les 15 dernières au plus.
+const PG_PLAN = {
+  debut: 1795129200,   // 20/11/2026 00:00, heure de Paris
+  fen: 15, min: 5,
+  doc: 'https://claude.ai/artifact/8WmjKBymcsnrnZXEbwJgRa',
+  equipe: [
+    { k: 'td14', lab: "Morts d'équipe avant 14 min, par partie", dep: 11.7, sens: -1, dec: 1, note: '10,6 en victoire, 13,5 en défaite au départ' },
+    { k: 'bot14', lab: 'Or de la botlane (ADC + support) à 14 min face à la leur', dep: -944, sens: 1, dec: 0, or: 1 },
+    { k: 'cw4', lab: 'Pinks achetées par partie, les quatre hors support ensemble', dep: 1.8, sens: 1, dec: 1, note: 'repère publié, autour de 6,4 pour les quatre' },
+    { k: 'he', lab: 'Part des hérauts pris', dep: 33, sens: 1, dec: 0, pc: 1 },
+  ],
+  joueurs: {
+    'Tea Oolong#M8RVG': {
+      obj: [{ k: 'kp', lab: 'Participation aux kills', dep: 28, cible: 40, sens: 1, pc: 1 },
+            { k: 'd14L', lab: 'Morts avant 14 min en défaite', dep: 3.3, cible: 2.5, sens: -1, dec: 1 }],
+      ex: ["Exercice de Kazewa du guide top en outil d'entraînement. Crash la wave 3, back, puis fais revenir les waves 4 à 9. Repère 55 sbires sur les 57 des neuf premières waves.",
+           "Lane perdue à 6 min ? Plus de trade sans ton jungle, farm sous la tour, et TP gardé pour le premier fight bot ou dragon.",
+           "Une pink à chaque back dès le premier objet, dans la rivière top ou devant le héraut."] },
+    'limonade#5193': {
+      obj: [{ k: 'cs10', lab: 'Sbires et camps à 10 min', dep: 64.5, cible: 68, sens: 1, dec: 1 },
+            { k: 'cw', lab: 'Pinks achetées par partie', dep: 0, cible: 2, sens: 1, dec: 1 },
+            { k: 'kp', lab: 'Participation aux kills', dep: 47, cible: 55, sens: 1, pc: 1 }],
+      ex: ["Full clear de Zac chronométré en outil d'entraînement, fini avant 3:15 trois fois de suite (guide jungle).",
+           "En début de partie, annoncer le sens de clear et la lane visée à 3:00.",
+           "Rentrer au moins 60 s avant un dragon ou un héraut, revenir avec une pink.",
+           "Travailler un deuxième champion du style de Zac en normale draft."] },
+    'Otagila#euw': {
+      obj: [{ k: 'vsm', lab: 'Vision par minute', dep: 0.52, cible: 0.8, sens: 1, dec: 2 },
+            { k: 'cw', lab: 'Pinks achetées par partie', dep: 0.1, cible: 1.5, sens: 1, dec: 1 }],
+      ex: ["Wave crashée avec la prio dans la minute avant un dragon, bouger en premier vers la rivière bot (roam objectif du guide mid).",
+           "Une pink à chaque back dès le premier objet, dans la rivière du côté de ton jungle.",
+           "En flex et en tournoi, rester sur Hwei, Taliyah et Aurelion Sol (17 victoires sur 20 au départ)."] },
+    'RVG Wartox#EUW': {
+      obj: [{ k: 'cs14d', lab: "Sbires à 14 min face à l'ADC adverse", dep: -7.2, cible: -3, sens: 1, dec: 1, sg: 1 },
+            { k: 'd14', lab: 'Morts avant 14 min', dep: 2.3, cible: 2, sens: -1, dec: 1 }],
+      ex: ["10 min de last hit sans objet ni sort en outil d'entraînement, jusqu'à dépasser 80 sbires trois fois de suite.",
+           "Avec Gingembre, compter les waves en vocal (A, B, canon) et annoncer le niveau 2 avant qu'il tombe.",
+           "2v2 perdu, rentrer sur la wave qui crash, sans retarder le back pour une plate.",
+           "Au moins une pink par partie, dans le buisson de la rivière bot avant le dragon."] },
+    'Gingembre#SDP': {
+      obj: [{ k: 'd14', lab: 'Morts avant 14 min', dep: 2.9, cible: 2, sens: -1, dec: 1 },
+            { k: 'd', lab: 'Morts par partie', dep: 7.8, cible: 6, sens: -1, dec: 1 },
+            { k: 'vsm', lab: 'Vision par minute (à garder)', dep: 2.71, cible: 2.5, sens: 1, dec: 2 }],
+      ex: ["Sur 5 parties, noter chaque mort. Étais-tu en train de warder, seul, dans le noir ?",
+           "Après un fight perdu, jamais de vision profonde seul. Attendre 15 à 30 s le jungle ou le mid (règles de Coach K, guide support).",
+           "Avant un roam, les deux questions du guide. Qu'est-ce que je perds, et mon ADC ? Où se passe le prochain play ?",
+           "En lane avec RVG Wartox, la course au niveau 2 annoncée en vocal."] },
+  },
+};
+
+// valeur d'une mesure pour un joueur dans une partie (null si non mesurable)
+function pgMes(k, g, p, op) {
+  const min = (g.d || 0) / 60;
+  switch (k) {
+    case 'kp': return p.kp != null ? 100 * p.kp : null;
+    case 'd14': return p.d14 != null ? p.d14 : null;
+    case 'd14L': return !g.win && p.d14 != null ? p.d14 : null;
+    case 'd': return p.d;
+    case 'cw': return p.cw != null ? p.cw : null;
+    case 'vsm': return min > 0 && p.vs != null ? p.vs / min : null;
+    case 'cs10': return p.f10 ? p.f10[2] : null;
+    case 'cs14d': return p.f14 && op && op.f14 ? p.f14[2] - op.f14[2] : null;
+  }
+  return null;
+}
+function pgMesEq(k, g) {
+  const us = pgRoles(g.us), th = pgRoles(g.them);
+  if (k === 'td14') return g.us.every(p => p.d14 != null) ? g.us.reduce((s, p) => s + p.d14, 0) : null;
+  if (k === 'cw4') return ROLES.filter(r => r !== 'sup' && us[r]).reduce((s, r) => s + (us[r].cw || 0), 0);
+  if (k === 'bot14') return ['adc', 'sup'].every(r => us[r] && th[r] && us[r].f14 && th[r].f14)
+    ? us.adc.f14[0] + us.sup.f14[0] - th.adc.f14[0] - th.sup.f14[0] : null;
+  return null;
+}
+// suivi : parties depuis le début du plan (les plus récentes d'abord dans parties.json), fen au plus
+function pgPlanSuivi(games) {
+  const P = PG_PLAN, rec = games.filter(g => g.t >= P.debut).slice(0, P.fen);
+  const avg = a => a.length ? a.reduce((s, x) => s + x, 0) / a.length : null;
+  const eq = P.equipe.map(o => {
+    if (o.k === 'he') {
+      let n = 0, a = 0; rec.forEach(g => (g.obj && g.obj.he || []).forEach(x => { n++; if (x[0]) a++; }));
+      return { ...o, v: n ? 100 * a / n : null, n: rec.length, nObj: n };
+    }
+    const v = rec.map(g => pgMesEq(o.k, g)).filter(x => x != null);
+    return { ...o, v: avg(v), n: v.length };
+  });
+  const jo = Object.entries(P.joueurs).map(([riot, J]) => {
+    const parts = [];
+    rec.forEach(g => { const us = pgRoles(g.us), th = pgRoles(g.them); ROLES.forEach(r => { if (us[r] && us[r].me === riot) parts.push([g, us[r], th[r]]); }); });
+    const obj = J.obj.map(o => { const v = parts.map(([g, p, op]) => pgMes(o.k, g, p, op)).filter(x => x != null); return { ...o, v: avg(v), n: v.length }; });
+    return { riot, n: parts.length, obj, ex: J.ex };
+  });
+  return { n: rec.length, eq, jo };
+}
+function pgPlanFmt(o, v) {
+  if (v == null) return '—';
+  if (o.or) return pgFmt(v);
+  if (o.sg) return (v > 0 ? '+' : '') + v.toFixed(o.dec || 0).replace('.', ',').replace('-', '−');
+  const s = (o.pc ? Math.round(v) : v.toFixed(o.dec || 0)).toString().replace('.', ',').replace('-', '−');
+  return o.pc ? s + ' %' : s;
+}
+// état d'une mesure : atteint, en progrès, à l'arrêt, ou trop peu de parties
+function pgPlanEtat(o) {
+  if (o.v == null || o.n < PG_PLAN.min) return ['attente', `à suivre (${o.n || 0} sur ${PG_PLAN.min} parties)`];
+  const s = o.sens, f = 10 ** (o.pc || o.or ? 0 : (o.dec || 0)), r = x => Math.round(x * f) / f, v = r(o.v);   // comparé à la précision affichée
+  if (o.cible != null && s * (v - o.cible) >= 0) return ['ok', 'cible atteinte'];
+  if (s * (v - r(o.dep)) > 0) return ['prog', 'mieux qu\'au départ'];
+  return ['ko', 'pas mieux qu\'au départ'];
+}
+function pgPlanHtml(games) {
+  const S = pgPlanSuivi(games), d = new Date(PG_PLAN.debut * 1000).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long' });
+  const cell = o => { const [c, t] = pgPlanEtat(o); return `<td>${pgPlanFmt(o, o.dep)}</td><td><b>${pgPlanFmt(o, o.v)}</b> <small>(${o.n})</small></td><td><span class="pg-et ${c}">${t}</span></td>`; };
+  let h = `<div class="pg-plan"><h3>Plan de progression · ${S.n} partie${S.n > 1 ? 's' : ''} depuis le ${d}</h3>
+    <p class="note">Départ = nos 39 parties au ${d}. Actuel = moyenne des parties jouées depuis, ${PG_PLAN.fen} au plus (nombre de parties entre parenthèses). Explications et sources dans le <a href="${PG_PLAN.doc}" target="_blank" rel="noopener">plan complet</a>.</p>
+    <h4>Les chantiers d'équipe</h4>
+    <table class="sum"><tr><th>Mesure</th><th>Départ</th><th>Actuel</th><th>Évolution</th></tr>${S.eq.map(o => `<tr><td>${esc(o.lab)}${o.note ? ` <small class="note">(${esc(o.note)})</small>` : ''}</td>${cell(o)}</tr>`).join('')}</table>
+    <h4>Par joueur</h4><div class="pg-pj">`;
+  S.jo.forEach(j => {
+    h += `<div class="pg-j"><b>${esc(pgName(j.riot))}</b> <small class="note">${j.n} partie${j.n > 1 ? 's' : ''} depuis le ${d}</small>
+      <table class="sum"><tr><th>Objectif</th><th>Cible</th><th>Départ</th><th>Actuel</th><th>Évolution</th></tr>${j.obj.map(o => `<tr><td>${esc(o.lab)}</td><td>${o.sens > 0 ? '≥' : '≤'} ${pgPlanFmt(Number.isInteger(o.cible) ? { ...o, dec: 0 } : o, o.cible)}</td>${cell(o)}</tr>`).join('')}</table>
+      <details><summary>Exercices</summary><ul>${j.ex.map(x => `<li>${esc(x)}</li>`).join('')}</ul></details></div>`;
+  });
+  return h + `</div><p class="note">Cibles et exercices choisis à la main dans le plan, à partir des repères Master+, de repères publiés et de nos guides de lane. Rien n'est jugé avant ${PG_PLAN.min} parties.</p></div>`;
+}
+
 function renderPost() {
   const el = $('#post'); if (!el) return;
   if (!PG.games && !PG.err) { el.innerHTML = '<p class="note">Chargement de nos parties…</p>'; pgLoad(); return; }
@@ -2875,6 +3006,7 @@ function renderPost() {
     <div class="pg-2"><div><h4>Points forts</h4><ul class="pg-good">${li(B.good)}</ul></div><div><h4>Axes de travail</h4><ul class="pg-bad">${li(B.bad)}</ul></div></div>
     <table class="sum"><tr><th>Joueur</th><th>Parties</th><th>Lane à 14 min (centile)</th><th>Farm à 10 min (centile)</th><th>Morts avant 14 min</th></tr>${Object.entries(B.P).sort((a, b) => b[1].n - a[1].n).map(([k, p]) => `<tr><td>${esc(pgName(k))}</td><td>${p.n}</td><td>${p.lp.length ? Math.round(B.avg(p.lp)) : '—'}</td><td>${p.csp.length ? Math.round(B.avg(p.csp)) : '—'}</td><td>${p.d14.length ? B.avg(p.d14).toFixed(1).replace('.', ',') : '—'}</td></tr>`).join('')}</table>
     <p class="note">Centile 50 = comme un joueur Master+ moyen sur le même matchup (lane) ou le même champion (farm). Seuils choisis à la main : une partie compte comme point fort au-dessus du centile ${PG_SEUILS.hi} et comme axe de travail sous le centile ${PG_SEUILS.lo} ; sur la durée, au-dessus de ${PG_SEUILS.aggHi} ou sous ${PG_SEUILS.aggLo} en moyenne sur ${PG_SEUILS.aggN} parties ou plus ; une avance ou un retard de ${PG_SEUILS.gold.toLocaleString('fr-FR')} or compte comme net.</p></div>`;
+  h += pgPlanHtml(games);
   // liste des parties
   const sel = Math.min(PG.sel, games.length - 1);
   h += `<div class="pg-list">${games.slice(0, 30).map((g, i) => { const ch = pgRoles(g.us); return `<button class="pg-g ${i === sel ? 'on' : ''} ${g.win ? 'w' : 'l'}" data-pg="${i}"><b>${g.win ? 'Victoire' : 'Défaite'}</b><small>${PG_Q[g.q] || g.q} · ${pgDate(g.t)} · ${pgMin(g.d)}</small><span>${ROLES.map(r => ch[r] && BY[ch[r].c] ? img(BY[ch[r].c]) : '').join('')}</span></button>`; }).join('')}</div>`;
