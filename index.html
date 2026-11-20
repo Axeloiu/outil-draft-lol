@@ -154,6 +154,13 @@ details.ideal summary{cursor:pointer}
 .frise .note{margin:2px 0 0}
 .frl{margin:4px 0 0;padding-left:4px;list-style:none;font-size:12.5px}.frl li{margin:2px 0}.frl li b{display:inline-block;min-width:38px}
 .frl li.fr-top b{color:var(--blue)}.frl li.fr-bot b{color:var(--gold)}.frl li.next{background:rgba(239,68,68,.12);border-radius:4px}.frl li.past{opacity:.55}
+.pg-bilan,.pg-detail{border:1px solid var(--line);border-radius:8px;padding:10px 12px;margin:10px 0}
+.pg-bilan h3,.pg-detail h3{margin:0 0 6px;font-size:15px}.pg-detail h4,.pg-bilan h4{margin:10px 0 4px;font-size:13px}
+.pg-2{display:grid;grid-template-columns:1fr 1fr;gap:12px}@media(max-width:800px){.pg-2{grid-template-columns:1fr}}
+.pg-good li::marker{color:#4caf50}.pg-bad li::marker{color:#e57373}.pg-good,.pg-bad{margin:0;padding-left:18px}.pg-good li,.pg-bad li{margin:3px 0}
+.pg-list{display:flex;gap:6px;overflow-x:auto;padding:4px 0}.pg-g{display:flex;flex-direction:column;align-items:flex-start;gap:2px;min-width:170px;border:1px solid var(--line);border-left:4px solid #e57373;border-radius:6px;padding:6px;background:var(--panel)}
+.pg-g.w{border-left-color:#4caf50}.pg-g.on{outline:2px solid var(--gold)}.pg-g small{opacity:.75}.pg-g .ic{width:22px;height:22px}
+.pgsp{width:100%;max-width:620px;height:auto;display:block;margin:4px 0}
 .score-box{border:1px solid var(--gold);border-radius:8px;padding:10px;margin:10px 0}
 .sb-top{display:grid;grid-template-columns:150px 1fr 150px;gap:10px;align-items:center;margin-bottom:8px}
 .sb-team{display:flex;flex-direction:column;align-items:center;background:var(--panel2);border-radius:8px;padding:8px}
@@ -219,13 +226,14 @@ details summary{cursor:pointer;color:var(--txt)}
 </style>
 </head>
 <body>
-<header><h1>Outil de draft LoL</h1><span id="meta"></span><nav class="tabs"><button data-tab="team">Équipe</button><button data-tab="comps">Compos</button><button data-tab="draft">Draft</button><button data-tab="ingame">En jeu</button></nav></header>
+<header><h1>Outil de draft LoL</h1><span id="meta"></span><nav class="tabs"><button data-tab="team">Équipe</button><button data-tab="comps">Compos</button><button data-tab="draft">Draft</button><button data-tab="ingame">En jeu</button><button data-tab="post">Après-game</button></nav></header>
 <main>
 <div id="live"></div>
 <section id="team" hidden></section>
 <section id="comps" hidden></section>
 <section id="prof" hidden></section>
 <section id="ingame" hidden></section>
+<section id="post" hidden></section>
 <section id="draft"></section>
 <details>
 <summary>Comment l'outil calcule ses conseils</summary>
@@ -2682,6 +2690,210 @@ async function startIngameSync(db) {
   } catch (e) { IGREF = null; }
 }
 
+// ===== Après-game : nos parties flex et normal draft, ce qu'on avait et comment on s'en est sorti =====
+// Données : branche data du dépôt (collector/equipe.py, mise à jour à chaque passage de la collecte, environ toutes les heures).
+//   equipe/parties.json : nos parties (au moins 3 joueurs de l'équipe ensemble), vues de notre côté
+//   equipe/reperes.json : repères Master+ des 3 dernières semaines (écarts contre le vis-à-vis à 10 et 14 min, par rôle et
+//                         par matchup ; farm ; morts avant 14:00), tirés des timelines collectées
+// Ce qui est mesuré : les repères et les écarts. Ce qui est choisi à la main : les seuils qui font d'un écart un compliment
+// ou un axe de travail (PG_SEUILS), et les règles sur les objectifs et l'or (avance perdue, remontée).
+const PG_URL = 'https://raw.githubusercontent.com/Axeloiu/outil-draft-lol/data/equipe/';
+const PG_SEUILS = { hi: 75, lo: 25, aggHi: 62, aggLo: 38, aggN: 3, gold: 3000, nBilan: 20 };
+const PG = { games: null, rep: null, err: null, sel: 0, loading: false, at: 0 };
+const PG_Q = { 440: 'Flex', 400: 'Normale draft' };
+
+async function pgLoad(force) {
+  if (PG.loading || (!force && PG.games && Date.now() - PG.at < 10 * 60 * 1000)) return;
+  PG.loading = true; PG.err = null;
+  try {
+    const get = f => fetch(PG_URL + f + '?t=' + Date.now(), { cache: 'no-store' }).then(r => { if (!r.ok) throw new Error(r.status); return r.json(); });
+    const [g, r] = await Promise.all([get('parties.json'), get('reperes.json').catch(() => null)]);
+    PG.games = Array.isArray(g) ? g : []; PG.rep = r; PG.at = Date.now();
+  } catch (e) { PG.err = String(e.message || e); PG.games = PG.games || []; }
+  PG.loading = false;
+  if (typeof TAB !== 'undefined' && TAB === 'post') renderPost();
+}
+
+// rang centile d'une valeur dans des déciles [p10 … p90]
+function pgPct(x, q) {
+  if (!q || x == null) return null;
+  if (x <= q[0]) return 5;
+  if (x >= q[8]) return 95;
+  for (let i = 0; i < 8; i++) if (x <= q[i + 1]) return 10 * (i + 1) + 10 * (q[i + 1] === q[i] ? 0.5 : (x - q[i]) / (q[i + 1] - q[i]));
+  return 95;
+}
+const pgName = riot => riot ? riot.split('#')[0] : '';
+const pgFmt = x => (x >= 0 ? '+' : '−') + Math.abs(Math.round(x)).toLocaleString('fr-FR');
+const pgDate = t => new Date(t * 1000).toLocaleString('fr-FR', { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+const pgMin = s => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+
+// rôles : position Riot, sinon le rôle libre restant
+function pgRoles(list) {
+  const M = {}, rest = [];
+  list.forEach(p => { if (p.r && !M[p.r]) M[p.r] = p; else rest.push(p); });
+  ROLES.filter(r => !M[r]).forEach(r => { const p = rest.shift(); if (p) M[r] = p; });
+  return M;
+}
+
+// Analyse d'une partie : ce qu'on avait, comment on s'en est sorti, compliments et axes
+function pgAnalyse(g) {
+  const R = PG.rep || {}, us = pgRoles(g.us), them = pgRoles(g.them);
+  const ourM = {}, enM = {};
+  ROLES.forEach(r => { if (us[r] && BY[us[r].c]) ourM[r] = BY[us[r].c]; if (them[r] && BY[them[r].c]) enM[r] = BY[them[r].c]; });
+  const full = ROLES.every(r => ourM[r] && enM[r]);
+  let wr = null, plan = null, focus = null;
+  if (full) {
+    try { wr = draftScore(ourM, enM).wr; } catch (e) { }
+    try {
+      plan = gamePlan(ROLES.map(r => ourM[r]), enM);
+      focus = plan.strong === 'bot' ? 'drake' : plan.strong === 'top' ? 'grubs' : (plan.sty === 'scaling' ? 'safe' : 'drake');
+    } catch (e) { }
+  }
+  const good = [], bad = [], rows = [];
+  ROLES.forEach(r => {
+    const me = us[r], op = them[r]; if (!me) return;
+    const L = (R.lane || {})[r] || {};
+    const row = { r, me, op, lane: null, exp: null, lp: null, cs: null, csp: null, d14: me.d14 };
+    if (me.f14 && op && op.f14) {
+      row.lane = me.f14[0] - op.f14[0];
+      const mu = (R.mu || {})[`${me.c}|${r}|${op.c}`];
+      row.exp = mu ? mu[1] : 0; row.expN = mu ? mu[0] : 0;
+      row.lp = pgPct(row.lane - row.exp, L.g14);
+    }
+    if (me.f10 && r !== 'sup') {
+      row.cs = me.f10[2];
+      const cr = (R.cr || {})[`${me.c}|${r}`];
+      const med = L.c10 ? L.c10[4] : null;
+      if (cr && med != null) { row.csExp = cr[1]; row.csp = pgPct(row.cs - cr[1] + med, L.c10); }
+    }
+    rows.push(row);
+    if (!me.me) return;   // joueur hors équipe : affiché, pas jugé
+    const who = pgName(me.me), ch = BY[me.c] ? BY[me.c].n : '?', oc = op && BY[op.c] ? BY[op.c].n : '?';
+    if (row.lp != null && r !== 'sup') {
+      const txt = `${who} (${ch} contre ${oc}) : ${pgFmt(row.lane)} or à 14 min, pour ${pgFmt(row.exp)} attendus sur ce matchup${row.expN ? ` (${row.expN} parties Master+)` : ''}`;
+      if (row.lp >= PG_SEUILS.hi) good.push([row.lp, `${txt}, mieux que ${Math.round(row.lp)} % des joueurs Master+.`]);
+      else if (row.lp <= PG_SEUILS.lo) bad.push([100 - row.lp, `${txt}, moins bien que ${Math.round(100 - row.lp)} % des joueurs Master+. Revoir la lane (trades, waves, backs).`]);
+    }
+    if (row.csp != null) {
+      if (row.csp >= PG_SEUILS.hi) good.push([row.csp - 10, `${who} : ${row.cs} sbires à 10 min (${Math.round(row.csExp)} en moyenne sur ${ch}), farm du haut du panier Master+.`]);
+      else if (row.csp <= PG_SEUILS.lo) bad.push([90 - row.csp, `${who} : ${row.cs} sbires à 10 min pour ${Math.round(row.csExp)} en moyenne sur ${ch} en Master+. Travailler le farm.`]);
+    }
+    const D = L.d14;
+    if (D && me.d14 != null) {
+      if (me.d14 >= Math.max(2, D[7])) bad.push([60 + 10 * me.d14, `${who} : ${me.d14} morts avant 14 min (la moitié des joueurs Master+ en font ${D[4]} ou moins).`]);
+      else if (me.d14 === 0 && D[4] >= 1 && r !== 'sup') good.push([55, `${who} : aucune mort avant 14 min.`]);
+    }
+  });
+  // équipe : or, objectifs, résultat
+  const gold = g.gold || [], mx = gold.length ? Math.max(...gold) : 0, mn = gold.length ? Math.min(...gold) : 0;
+  const g14 = gold[14] != null ? gold[14] : null, g14p = g14 != null ? pgPct(g14, R.tg14) : null;
+  if (!g.win && mx >= PG_SEUILS.gold) bad.push([90, `Avance de ${pgFmt(mx)} or (max, ${pgMin(gold.indexOf(mx) * 60)}) non convertie : revoir les décisions après l'avance (objectifs, vision, regroupement).`]);
+  if (g.win && mn <= -PG_SEUILS.gold) good.push([90, `Remontée : ${pgFmt(mn)} or au pire moment, et victoire quand même.`]);
+  const O = g.obj || {}, cnt = (a, t) => (a || []).filter(x => x[1] < (t || 1e9));
+  const dr = [cnt(O.dr).filter(x => x[0]).length, cnt(O.dr).filter(x => !x[0]).length];
+  const gr = [cnt(O.gr).filter(x => x[0]).length, cnt(O.gr).filter(x => !x[0]).length];
+  const dr20 = [cnt(O.dr, 1200).filter(x => x[0]).length, cnt(O.dr, 1200).filter(x => !x[0]).length];
+  if (focus === 'drake' && dr20[0] + dr20[1] >= 2) {
+    if (dr20[0] > dr20[1]) good.push([70, `Plan respecté : la compo visait les dragons, ${dr20[0]} sur ${dr20[0] + dr20[1]} avant 20 min.`]);
+    else if (dr20[0] < dr20[1]) bad.push([70, `La compo visait les dragons, mais l'adversaire en a pris ${dr20[1]} sur ${dr20[0] + dr20[1]} avant 20 min : préparer le côté bot 1 min avant (wave poussée, vision).`]);
+  }
+  if (focus === 'grubs' && gr[0] + gr[1] >= 2) {
+    if (gr[0] > gr[1]) good.push([70, `Plan respecté : la compo visait le top, ${gr[0]} larves sur ${gr[0] + gr[1]}.`]);
+    else if (gr[0] < gr[1]) bad.push([70, `La compo visait le top, mais l'adversaire a pris ${gr[1]} larves sur ${gr[0] + gr[1]}.`]);
+  }
+  const ba = O.ba || [];
+  if (!g.win && ba.some(x => !x[0]) && !ba.some(x => x[0])) bad.push([65, `Nash adverse${ba.length > 1 ? 's' : ''} sans réponse : vision autour du nash à partir de 19:00 et pas de face-check.`]);
+  if (wr != null) {
+    if (g.win && wr < 48) good.push([80, `Victoire avec une draft défavorable (${pct(wr / 100)} attendus).`]);
+    if (!g.win && wr >= 54) bad.push([60, `Défaite avec une draft favorable (${pct(wr / 100)} attendus) : la différence s'est faite en jeu.`]);
+  }
+  good.sort((a, b) => b[0] - a[0]); bad.sort((a, b) => b[0] - a[0]);
+  return { us, them, ourM, enM, wr, plan, focus, rows, good, bad, gold, g14, g14p, dr, gr, mx, mn };
+}
+
+function pgSpark(gold) {
+  if (!gold || gold.length < 2) return '';
+  const W = 520, H = 90, n = gold.length - 1, m = Math.max(2000, ...gold.map(Math.abs));
+  const x = i => 30 + i / n * (W - 40), y = v => H / 2 - v / m * (H / 2 - 8);
+  const pts = gold.map((v, i) => `${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(' ');
+  const ticks = []; for (let t = 0; t <= n; t += 5) ticks.push(`<text x="${x(t)}" y="${H - 1}" font-size="9" text-anchor="middle" fill="currentColor" opacity=".6">${t}</text>`);
+  return `<svg class="pgsp" viewBox="0 0 ${W} ${H}" role="img" aria-label="Écart d'or de notre équipe minute par minute">
+    <line x1="30" x2="${W - 10}" y1="${H / 2}" y2="${H / 2}" stroke="currentColor" opacity=".3"/>
+    <text x="2" y="12" font-size="9" fill="currentColor" opacity=".7">${pgFmt(m)}</text><text x="2" y="${H - 12}" font-size="9" fill="currentColor" opacity=".7">${pgFmt(-m)}</text>
+    <polyline points="${pts}" fill="none" stroke="var(--gold)" stroke-width="2"/>${ticks.join('')}</svg>`;
+}
+
+// Bilan sur les N dernières parties : moyennes par joueur et tendances d'équipe
+function pgBilan(list) {
+  const P = {}, T = { n: 0, w: 0, exp: 0, nexp: 0, dr: [0, 0], fd: [0, 0], gr: [0, 0], throws: 0, comebacks: 0 };
+  list.forEach(g => {
+    const a = pgAnalyse(g); T.n++; if (g.win) T.w++;
+    if (a.wr != null) { T.exp += a.wr / 100; T.nexp++; }
+    T.dr[0] += a.dr[0]; T.dr[1] += a.dr[1]; T.gr[0] += a.gr[0]; T.gr[1] += a.gr[1];
+    const fd = (g.obj && g.obj.dr || [])[0]; if (fd) T.fd[fd[0] ? 0 : 1]++;
+    if (!g.win && a.mx >= PG_SEUILS.gold) T.throws++;
+    if (g.win && a.mn <= -PG_SEUILS.gold) T.comebacks++;
+    a.rows.forEach(row => {
+      if (!row.me.me) return;
+      const k = row.me.me, p = P[k] || (P[k] = { n: 0, lp: [], csp: [], d14: [], r: {} });
+      p.n++; p.r[row.r] = (p.r[row.r] || 0) + 1;
+      if (row.lp != null && row.r !== 'sup') p.lp.push(row.lp);
+      if (row.csp != null) p.csp.push(row.csp);
+      if (row.d14 != null) p.d14.push(row.d14);
+    });
+  });
+  const avg = a => a.length ? a.reduce((s, x) => s + x, 0) / a.length : null;
+  const good = [], bad = [], S = PG_SEUILS;
+  Object.entries(P).forEach(([k, p]) => {
+    const who = pgName(k), lp = avg(p.lp), csp = avg(p.csp), d = avg(p.d14);
+    if (p.lp.length >= S.aggN && lp >= S.aggHi) good.push([lp, `${who} gagne ses lanes au-delà de ce qu'annoncent les matchups (centile moyen ${Math.round(lp)} sur ${p.lp.length} parties).`]);
+    if (p.lp.length >= S.aggN && lp <= S.aggLo) bad.push([100 - lp, `${who} sort souvent de lane derrière ce qu'annoncent les matchups (centile moyen ${Math.round(lp)} sur ${p.lp.length} parties).`]);
+    if (p.csp.length >= S.aggN && csp >= S.aggHi) good.push([csp - 5, `${who} : farm à 10 min au-dessus des joueurs Master+ du même champion (centile moyen ${Math.round(csp)}).`]);
+    if (p.csp.length >= S.aggN && csp <= S.aggLo) bad.push([95 - csp, `${who} : farm à 10 min en dessous des joueurs Master+ du même champion (centile moyen ${Math.round(csp)}).`]);
+    if (p.d14.length >= S.aggN && d >= 2) bad.push([50 + 10 * d, `${who} meurt en moyenne ${d.toFixed(1).replace('.', ',')} fois avant 14 min.`]);
+  });
+  const dt = T.dr[0] + T.dr[1], ft = T.fd[0] + T.fd[1];
+  if (ft >= S.aggN) { const r = T.fd[0] / ft; if (r >= 0.65) good.push([70, `Premier dragon pris dans ${Math.round(100 * r)} % des parties.`]); else if (r <= 0.35) bad.push([70, `Premier dragon laissé à l'adversaire dans ${Math.round(100 * (1 - r))} % des parties.`]); }
+  if (T.throws >= 2) bad.push([75, `${T.throws} parties perdues après une avance de ${pgFmt(S.gold)} or ou plus.`]);
+  if (T.comebacks >= 2) good.push([75, `${T.comebacks} victoires après avoir été mené de ${pgFmt(S.gold).replace('+', '')} or ou plus.`]);
+  if (T.nexp >= S.aggN) { const d = T.w - T.exp; if (d >= 1.5) good.push([65, `${T.w} victoires pour ${T.exp.toFixed(1).replace('.', ',')} attendues d'après les drafts : l'équipe joue au-dessus de ses compos.`]); else if (d <= -1.5) bad.push([65, `${T.w} victoires pour ${T.exp.toFixed(1).replace('.', ',')} attendues d'après les drafts : l'équipe joue en dessous de ses compos.`]); }
+  good.sort((a, b) => b[0] - a[0]); bad.sort((a, b) => b[0] - a[0]);
+  return { T, P, good, bad, avg };
+}
+
+function renderPost() {
+  const el = $('#post'); if (!el) return;
+  if (!PG.games && !PG.err) { el.innerHTML = '<p class="note">Chargement de nos parties…</p>'; pgLoad(); return; }
+  const games = PG.games || [];
+  let h = `<div class="ctrl"><b>Après-game</b><span class="note">${games.length} partie${games.length > 1 ? 's' : ''} d'équipe (flex et normale draft, au moins 3 de l'équipe ensemble)${PG.rep ? ` · repères Master+ : ${PG.rep.n.toLocaleString('fr-FR')} parties des ${PG.rep.jours} derniers jours` : ''}</span><span class="grow"></span><button id="pgre" class="ghost">Actualiser</button></div>`;
+  if (PG.err && !games.length) h += `<p class="note">Parties introuvables pour l'instant (${esc(PG.err)}). La collecte les ajoute à chaque passage, environ toutes les heures, une fois sa mise à jour en ligne.</p>`;
+  if (!games.length) { el.innerHTML = h + (PG.err ? '' : '<p class="note">Aucune partie d\'équipe trouvée sur les 30 derniers jours. Elles apparaîtront après la prochaine partie en flex ou en normale draft à 3 ou plus.</p>'); pgBind(); return; }
+  // bilan
+  const B = pgBilan(games.slice(0, PG_SEUILS.nBilan));
+  const li = a => a.length ? a.slice(0, 4).map(x => `<li>${esc(x[1])}</li>`).join('') : '<li class="note">Rien de net pour l\'instant.</li>';
+  h += `<div class="pg-bilan"><h3>Sur nos ${B.T.n} dernières parties · ${B.T.w} victoire${B.T.w > 1 ? 's' : ''}${B.T.nexp ? `, ${B.T.exp.toFixed(1).replace('.', ',')} attendue${B.T.exp >= 2 ? 's' : ''} d'après les drafts` : ''}</h3>
+    <div class="pg-2"><div><h4>Points forts</h4><ul class="pg-good">${li(B.good)}</ul></div><div><h4>Axes de travail</h4><ul class="pg-bad">${li(B.bad)}</ul></div></div>
+    <table class="sum"><tr><th>Joueur</th><th>Parties</th><th>Lane à 14 min (centile)</th><th>Farm à 10 min (centile)</th><th>Morts avant 14 min</th></tr>${Object.entries(B.P).sort((a, b) => b[1].n - a[1].n).map(([k, p]) => `<tr><td>${esc(pgName(k))}</td><td>${p.n}</td><td>${p.lp.length ? Math.round(B.avg(p.lp)) : '—'}</td><td>${p.csp.length ? Math.round(B.avg(p.csp)) : '—'}</td><td>${p.d14.length ? B.avg(p.d14).toFixed(1).replace('.', ',') : '—'}</td></tr>`).join('')}</table>
+    <p class="note">Centile 50 = comme un joueur Master+ moyen sur le même matchup (lane) ou le même champion (farm). Seuils choisis à la main : une partie compte comme point fort au-dessus du centile ${PG_SEUILS.hi} et comme axe de travail sous le centile ${PG_SEUILS.lo} ; sur la durée, au-dessus de ${PG_SEUILS.aggHi} ou sous ${PG_SEUILS.aggLo} en moyenne sur ${PG_SEUILS.aggN} parties ou plus ; une avance ou un retard de ${PG_SEUILS.gold.toLocaleString('fr-FR')} or compte comme net.</p></div>`;
+  // liste des parties
+  const sel = Math.min(PG.sel, games.length - 1);
+  h += `<div class="pg-list">${games.slice(0, 30).map((g, i) => { const ch = pgRoles(g.us); return `<button class="pg-g ${i === sel ? 'on' : ''} ${g.win ? 'w' : 'l'}" data-pg="${i}"><b>${g.win ? 'Victoire' : 'Défaite'}</b><small>${PG_Q[g.q] || g.q} · ${pgDate(g.t)} · ${pgMin(g.d)}</small><span>${ROLES.map(r => ch[r] && BY[ch[r].c] ? img(BY[ch[r].c]) : '').join('')}</span></button>`; }).join('')}</div>`;
+  // détail
+  const g = games[sel], a = pgAnalyse(g);
+  h += `<div class="pg-detail"><h3>${g.win ? 'Victoire' : 'Défaite'} · ${PG_Q[g.q] || g.q} · ${pgDate(g.t)} · ${pgMin(g.d)} · côté ${g.side === 'B' ? 'bleu' : 'rouge'}</h3>`;
+  h += `<h4>Ce qu'on avait</h4><p>${ROLES.map(r => a.ourM[r] ? img(a.ourM[r]) : '').join('')} <b>contre</b> ${ROLES.map(r => a.enM[r] ? img(a.enM[r]) : '').join('')}</p>`;
+  if (a.wr != null) h += `<p>Winrate attendu de la draft : <b>${pct(a.wr / 100)}</b>${a.plan ? ` · compo ${esc((ARCH[a.plan.id.main] || '').toLowerCase())}, côté fort ${a.plan.strong === 'bot' ? 'bot' : a.plan.strong === 'top' ? 'top' : 'aucun net'}, objectif visé ${a.focus === 'drake' ? 'les dragons' : a.focus === 'grubs' ? 'les larves et le héraut' : 'aucun, jeu sûr'}` : ''}.</p>`;
+  h += `<h4>Comment on s'en est sorti</h4>${pgSpark(a.gold)}<p class="note">Écart d'or de notre équipe minute par minute${a.g14 != null ? ` · à 14 min ${pgFmt(a.g14)}${a.g14p != null ? `, mieux que ${Math.round(a.g14p)} % des équipes Master+` : ''}` : ''} · dragons ${a.dr[0]}-${a.dr[1]} · larves ${a.gr[0]}-${a.gr[1]} · tours ${(g.tw || [0, 0]).join('-')}${g.obj && g.obj.fb ? ` · premier sang ${g.obj.fb[0] ? 'pour nous' : 'pour eux'}` : ''}</p>`;
+  h += `<table class="sum"><tr><th>Rôle</th><th>Joueur</th><th>KDA</th><th>Or à 14 min contre le vis-à-vis</th><th>Attendu (matchup)</th><th>Centile</th><th>Sbires à 10 min</th><th>Morts avant 14</th><th>Vision</th></tr>${a.rows.map(x => `<tr${x.me.me ? '' : ' class="note"'}><td>${RL[x.r]}</td><td>${x.me.me ? esc(pgName(x.me.me)) : 'renfort'} ${BY[x.me.c] ? img(BY[x.me.c]) : ''}${x.op && BY[x.op.c] ? ' <small>contre</small> ' + img(BY[x.op.c]) : ''}</td><td>${x.me.k}/${x.me.d}/${x.me.a}</td><td>${x.lane != null ? pgFmt(x.lane) : '—'}</td><td>${x.exp != null ? pgFmt(x.exp) + (x.expN ? ` <small>(${x.expN})</small>` : ' <small>(pas de repère)</small>') : '—'}</td><td>${x.lp != null && x.r !== 'sup' ? Math.round(x.lp) : '—'}</td><td>${x.cs != null ? x.cs + (x.csExp ? ` <small>(${Math.round(x.csExp)})</small>` : '') : '—'}</td><td>${x.d14 != null ? x.d14 : '—'}</td><td>${x.me.vs}</td></tr>`).join('')}</table>`;
+  h += `<div class="pg-2"><div><h4>Points forts</h4><ul class="pg-good">${li(a.good)}</ul></div><div><h4>Axes de travail</h4><ul class="pg-bad">${li(a.bad)}</ul></div></div></div>`;
+  el.innerHTML = h; pgBind();
+}
+
+function pgBind() {
+  const r = $('#pgre'); if (r) r.onclick = () => { PG.games = null; PG.err = null; renderPost(); pgLoad(true); };
+  document.querySelectorAll('[data-pg]').forEach(b => b.onclick = () => { PG.sel = +b.dataset.pg; renderPost(); });
+}
+
 // ===== Interface =====
 const $ = s => document.querySelector(s);
 const esc = s => String(s).replace(/[&<>"']/g, m => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[m]));
@@ -2696,7 +2908,8 @@ function render() {
   $('#draft').hidden = TAB !== 'draft';
   $('#prof').hidden = TAB !== 'prof';
   $('#ingame').hidden = TAB !== 'ingame';
-  if (TAB === 'team') renderTeam(); else if (TAB === 'comps') renderComps(); else if (TAB === 'prof') renderProf(); else if (TAB === 'ingame') renderIngame(); else renderDraft();
+  if ($('#post')) $('#post').hidden = TAB !== 'post';
+  if (TAB === 'team') renderTeam(); else if (TAB === 'comps') renderComps(); else if (TAB === 'prof') renderProf(); else if (TAB === 'ingame') renderIngame(); else if (TAB === 'post') renderPost(); else renderDraft();
   const lb = document.getElementById('live'); if (lb) { lb.innerHTML = liveBar(); bindLive(); }
 }
 

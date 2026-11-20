@@ -1,0 +1,12 @@
+{
+  "joueurs": [
+    {"riot": "Tea Oolong#M8RVG", "role": "top"},
+    {"riot": "limonade#5193", "role": "jgl"},
+    {"riot": "Otagila#euw", "role": "mid"},
+    {"riot": "RVG Wartox#EUW", "role": "adc"},
+    {"riot": "Gingembre#SDP", "role": "sup"}
+  ],
+  "files": [440, 400],
+  "min_ensemble": 3,
+  "jours_premier_passage": 30
+}
