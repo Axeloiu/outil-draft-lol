@@ -1894,8 +1894,7 @@ function simOnce(st0, force, sample) {
   for (const r of ROLES) if (M[r]) v += comfortPts(M[r], r);
   return { v, M, O };
 }
-// 100 tirages (au lieu de 200) : la draft flex laisse 30 s pour deux picks ; l'ordre final est départagé par SIM_NP
-const SIM_N = 100;
+const SIM_N = 200;
 // option de test : 'terrain' fait jouer notre équipe comme le terrain adverse (sert à vérifier le modèle du monde de la simulation)
 const SIM_OPT = { us: 'outil' };
 let SIM_SEED = 1000;
@@ -1920,7 +1919,7 @@ function simGet(force) {
   const k = simKey(force); if (SIM_CACHE.has(k)) return SIM_CACHE.get(k);
   if (!SIM_Q.some(q => q.k === k)) SIM_Q.push({ k, force, sig: simSig() });
   SIM_PENDING = true;
-  if (!SIM_T) SIM_T = setTimeout(simPump, 0);
+  simKick();
   return null;
 }
 function simPump() {
@@ -1936,14 +1935,82 @@ function simPump() {
   if (SIM_Q.length || SIMP_Q.length) SIM_T = setTimeout(simPump, 0);
   else { SIM_PENDING = false; if (typeof safeRender === 'function' && typeof TAB !== 'undefined' && TAB === 'draft') safeRender(); }
 }
+// ===== Calcul en parallèle (Web Workers) =====
+// Les simulations tournent sur plusieurs cœurs du processeur : chaque worker charge une copie du code et des données (le
+// texte du script de la page, jusqu'au repère de fin), reçoit l'état de la draft et calcule des tirages entiers. Mêmes
+// graines que le calcul sur un seul cœur, donc mêmes résultats. Sans worker possible, on reste sur simPump.
+const SIM_SRC = (typeof document !== 'undefined' && document.currentScript) ? document.currentScript.textContent : null;
+const SIMW = { list: null, off: false, busy: 0 };
+function simWorkers() {
+  if (SIMW.list || SIMW.off) return SIMW.list;
+  try {
+    const end = SIM_SRC ? SIM_SRC.indexOf('/*@@' + 'FIN_WORKER@@*/') : -1;
+    if (end < 0 || typeof Worker === 'undefined' || typeof Blob === 'undefined' || typeof URL === 'undefined') { SIMW.off = true; return null; }
+    const nw = Math.max(1, Math.min(4, ((typeof navigator !== 'undefined' && navigator.hardwareConcurrency) || 2) - 1));
+    const glue = `
+self.onmessage = e => {
+  const m = e.data;
+  if (m.st) { for (const k in S) delete S[k]; Object.assign(S, m.st.S); Object.assign(OPT, m.st.OPT); SIM_SEED = m.st.seed; simReset(); return; }
+  const f = m.f, force = f ? {} : null;
+  if (f && f.us) force.us = [BY[f.us[0]], f.us[1]];
+  if (f && f.them) force.them = [BY[f.them[0]], f.them[1]];
+  if (f && f.ban) force.ban = BY[f.ban];
+  const st0 = simStart(), a = new Float64Array(m.n);
+  for (let i = 0; i < m.n; i++) a[i] = simOnce(st0, force, SIM_SEED + i).v;
+  self.postMessage({ id: m.id, a }, [a.buffer]);
+};`;
+    const url = URL.createObjectURL(new Blob([SIM_SRC.slice(0, end) + glue], { type: 'text/javascript' }));
+    SIMW.list = [];
+    for (let i = 0; i < nw; i++) {
+      const w = new Worker(url); const o = { w, job: null, sig: null };
+      w.onmessage = e => simDone(o, e.data);
+      w.onerror = ev => { if (ev && ev.preventDefault) ev.preventDefault(); simWorkersOff(); };
+      SIMW.list.push(o);
+    }
+    return SIMW.list;
+  } catch (e) { SIMW.off = true; SIMW.list = null; return null; }
+}
+function simWorkersOff() {
+  // panne d'un worker : on remet ses calculs en file et on repasse sur un seul cœur
+  if (SIMW.list) SIMW.list.forEach(o => { if (o.job) (o.job.prec ? SIMP_Q : SIM_Q).unshift(o.job); try { o.w.terminate(); } catch (e) {} });
+  SIMW.list = null; SIMW.off = true; SIMW.busy = 0; if (!SIM_T) SIM_T = setTimeout(simPump, 0);
+}
+const simForceIds = f => f ? { us: f.us && [f.us[0].id, f.us[1]], them: f.them && [f.them[0].id, f.them[1]], ban: f.ban && f.ban.id } : null;
+function simKick() {
+  const L = simWorkers();
+  if (!L) { if (!SIM_T) SIM_T = setTimeout(simPump, 0); return; }
+  const sig = simSig();
+  for (const o of L) {
+    if (o.job) continue;
+    let q = null;
+    while (SIM_Q.length) { const x = SIM_Q.shift(); if (x.sig === sig && !SIM_CACHE.has(x.k)) { q = x; break; } }
+    if (!q) while (SIMP_Q.length) { const x = SIMP_Q.shift(); if (x.sig === sig && !SIMP.has(x.k)) { q = x; q.prec = true; break; } }
+    if (!q) break;
+    if (o.sig !== sig) { o.w.postMessage({ st: { S: JSON.parse(JSON.stringify(S)), OPT: Object.assign({}, OPT), seed: SIM_SEED } }); o.sig = sig; }
+    o.job = q; SIMW.busy++;
+    o.w.postMessage({ id: q.k, f: simForceIds(q.force), n: q.prec ? SIM_NP : SIM_N });
+  }
+  if (!SIMW.busy && !SIM_Q.length && !SIMP_Q.length) simIdle();
+}
+function simDone(o, m) {
+  const q = o.job; o.job = null; SIMW.busy--;
+  if (q && q.k === m.id && q.sig === simSig()) {
+    const a = m.a, n = a.length; let s = 0, s2 = 0; for (const x of a) { s += x; s2 += x * x; }
+    const v = s / n;
+    if (q.prec) { if (SIMP.size > 500) SIMP.clear(); SIMP.set(q.k, { v, a }); }
+    else { if (SIM_CACHE.size > 3000) SIM_CACHE.clear(); SIM_CACHE.set(q.k, { v, sd: Math.sqrt(Math.max(0, s2 / n - v * v)) }); }
+  }
+  simKick();
+}
+function simIdle() { SIM_PENDING = false; if (typeof safeRender === 'function' && typeof TAB !== 'undefined' && TAB === 'draft') safeRender(); }
 // Ordre des picks : avec 200 tirages, l'écart entre deux picks pris maintenant a une erreur d'environ 0,08 point de winrate,
 // autant que les écarts eux-mêmes (garder Aurelion Sol ou Vayne pour le counter-pick vaut ~0,1 point). Pour départager,
-// SIM_NP tirages (mêmes nombres aléatoires pour tous les picks, donc écarts appariés : erreur ≈ 0,05 point avec 400).
-const SIM_NP = 400, SIMP = new Map(), SIMP_Q = [];
+// SIM_NP tirages (mêmes nombres aléatoires pour tous les picks, donc écarts appariés : erreur ≈ 0,03 point).
+const SIM_NP = 1000, SIMP = new Map(), SIMP_Q = [];
 function simPrecise(force) {
   const k = simKey(force); if (SIMP.has(k)) return SIMP.get(k);
   if (!SIMP_Q.some(q => q.k === k)) SIMP_Q.push({ k, force, sig: simSig() });
-  SIM_PENDING = true; if (!SIM_T) SIM_T = setTimeout(simPump, 0);
+  SIM_PENDING = true; simKick();
   return null;
 }
 // écart apparié a − b (moyenne et erreur type)
@@ -2114,6 +2181,7 @@ function situationalItems(c, r, enemies, max = 5) {
   return out;
 }
 
+/*@@FIN_WORKER@@*/
 // ===== Onglet « En jeu » : chronos des sorts d'invocateur adverses, à la voix ou au clavier =====
 // Rien ne touche au jeu : micro (Web Speech API de Chrome) et saisie manuelle uniquement.
 
