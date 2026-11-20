@@ -238,6 +238,7 @@ def tl_of(tl, info):
             out.append([f.get('totalGold', 0), f.get('xp', 0), f.get('minionsKilled', 0) + f.get('jungleMinionsKilled', 0)])
         return out
     buys = {pid: [] for pid in order}
+    d14 = {pid: 0 for pid in order}   # morts avant 14:00, pour les repères de l'onglet Après-game
     obj = {'fb': None, 'ft': None, 'dr': [], 'gr': [], 'he': [], 'ba': []}
     for k, fr in enumerate(frames):
         for e in fr.get('events') or []:
@@ -248,8 +249,11 @@ def tl_of(tl, info):
                 b = buys[e['participantId']]
                 if b and b[-1][0] == e.get('beforeId'):
                     b.pop()
-            elif ty == 'CHAMPION_KILL' and obj['fb'] is None and e.get('killerId') in team:
-                obj['fb'] = [team[e['killerId']], ts]
+            elif ty == 'CHAMPION_KILL':
+                if ts < 840 and e.get('victimId') in d14:
+                    d14[e['victimId']] += 1
+                if obj['fb'] is None and e.get('killerId') in team:
+                    obj['fb'] = [team[e['killerId']], ts]
             elif ty == 'BUILDING_KILL' and e.get('buildingType') == 'TOWER_BUILDING' and obj['ft'] is None:
                 obj['ft'] = [300 - (e.get('teamId') or 0), ts, (e.get('laneType') or '')[:3]]   # équipe qui la prend, seconde, lane
             elif ty == 'ELITE_MONSTER_KILL':
@@ -262,7 +266,7 @@ def tl_of(tl, info):
         if len(frames) > minute:
             pf = frames[minute].get('participantFrames') or {}
             jp.append([[(pf.get(str(pid)) or {}).get('position', {}).get('x'), (pf.get(str(pid)) or {}).get('position', {}).get('y')] for pid in jg])
-    return {'f10': at(10), 'f14': at(14), 'buy': [buys[pid] for pid in order], 'jg': [team.get(pid) for pid in jg], 'jp': jp, 'o': obj}
+    return {'f10': at(10), 'f14': at(14), 'd14': [d14[pid] for pid in order], 'buy': [buys[pid] for pid in order], 'jg': [team.get(pid) for pid in jg], 'jp': jp, 'o': obj}
 
 
 def run_region(st, region):
