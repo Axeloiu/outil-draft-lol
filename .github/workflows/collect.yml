@@ -44,6 +44,11 @@ jobs:
         if: env.BASE != ''
         run: python3 code/collector/recover.py data b3257a4e406510bf4c827f6164209fb2c21bb89d
 
+      - name: Parties de l'équipe et repères Master+ (onglet Après-game)
+        env:
+          RIOT_API_KEY: ${{ secrets.RIOT_API_KEY }}
+        run: python3 code/collector/equipe.py data || echo "équipe, passage sauté"
+
       - name: Collecte (environ 50 minutes)
         env:
           RIOT_API_KEY: ${{ secrets.RIOT_API_KEY }}
