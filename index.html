@@ -384,7 +384,7 @@ const D = () => S.draft;
 const ours = st => st.s === S.side;
 function curStep() { return D().seq[D().fill.length]; }
 function used() { return new Set(D().fill.filter(x => x != null)); }
-function locked() { return new Set(S.fearless && S.mode === 'tourn' ? S.series.locked : []); }
+function locked() { return new Set(S.fearless ? S.series.locked : []); }
 function available(c) { return !used().has(c.id) && !locked().has(c.id); }
 function picksOf(side) {
   const out = [];
@@ -1641,7 +1641,7 @@ const ROLE_FR1 = { T: 'top', J: 'jungle', M: 'mid', B: 'ADC', S: 'support' };
 let IDC = { k: null, v: null };
 function idealNow() {
   const d = D(); if (!d) return null;
-  const k = [d.fill.join(','), JSON.stringify(d.roles), S.side, S.mode, S.target ? S.target.ids.join(',') : '', S.team.map(t => t.pool.join('.') + ':' + JSON.stringify(t.comf || {}) + ':' + (t.want || []).join('.')).join('|'), OPT.offPool, OPT.proOnly, S.target ? S.target.style : ''].join('#');
+  const k = [d.fill.join(','), JSON.stringify(d.roles), [...locked()].join('.'), S.side, S.mode, S.target ? S.target.ids.join(',') : '', S.team.map(t => t.pool.join('.') + ':' + JSON.stringify(t.comf || {}) + ':' + (t.want || []).join('.')).join('|'), OPT.offPool, OPT.proOnly, S.target ? S.target.style : ''].join('#');
   if (IDC.k !== k) IDC = { k, v: bestComps(1, { target: true })[0] || null };
   return IDC.v;
 }
@@ -1899,7 +1899,7 @@ const SIM_N = 200;
 const SIM_OPT = { us: 'outil' };
 let SIM_SEED = 1000;
 const SIM_CACHE = new Map();
-function simSig() { return JSON.stringify([S.side, S.mode, D().fill, D().roles, S.team.map(p => [p.pool, p.comf || null])]); }
+function simSig() { return JSON.stringify([S.side, S.mode, D().fill, D().roles, [...locked()], S.team.map(p => [p.pool, p.comf || null])]); }
 function simKey(force) { return simSig() + JSON.stringify(force ? [force.us && [force.us[0].id, force.us[1]], force.them && [force.them[0].id, force.them[1]], force.ban && force.ban.id] : 0); }
 function simValue(force) {
   const sig = simKey(force);
@@ -3100,8 +3100,8 @@ function controls() {
   return `<div class="ctrl">
     <div class="seg"><span>Mode</span><button data-mode="flex" class="${!t ? 'on' : ''}">Flex</button><button data-mode="tourn" class="${t ? 'on' : ''}">Tournoi</button></div>
     <div class="seg"><span>Nous sommes</span><button data-side="B" class="${S.side === 'B' ? 'on' : ''}">Bleu (1er pick)</button><button data-side="R" class="${S.side === 'R' ? 'on' : ''}">Rouge (dernier pick)</button></div>
-    ${t ? `<label class="chk"><input type="checkbox" id="fear" ${S.fearless ? 'checked' : ''}> Fearless</label>` : ''}
-    ${t && S.fearless ? `<span class="game">Game ${S.series.game} · ${S.series.locked.length} champions verrouillés</span><button id="nextg">Game suivante</button><button id="resets" class="ghost">Nouvelle série</button>` : ''}
+    <label class="chk"><input type="checkbox" id="fear" ${S.fearless ? 'checked' : ''}> Fearless</label>
+    ${S.fearless ? `<span class="game">Game ${S.series.game} · ${S.series.locked.length} champions verrouillés</span><button id="nextg">Game suivante</button><button id="resets" class="ghost">Nouvelle série</button>` : ''}
     ${typeof autoControl === 'function' ? autoControl() : ''}
     <span class="grow"></span>
     <button id="undo" class="ghost">Annuler</button><button id="reset" class="ghost">Réinitialiser</button>
@@ -3196,7 +3196,7 @@ function summary() {
   if (Object.keys(mine).length === 5 && Object.keys(er).length === 5) h += `<p class="note">Objets conseillés pour cette partie : onglet <b>En jeu</b>.</p>`;
   const csArr = ROLES.map(r => mine[r]);
   if (csArr.every(Boolean)) { const plan = gamePlan(csArr, er); h += planHtml(plan, `Plan de jeu \u00b7 ${ARCH[plan.id.main]}`); }
-  if (tourn() && S.fearless) h += `<p class="note">Clique sur « Game suivante » pour verrouiller ces 10 champions pour le reste de la série.</p>`;
+  if (S.fearless) h += `<p class="note">Clique sur « Game suivante » pour verrouiller ces 10 champions pour le reste de la série.</p>`;
   return h;
 }
 
