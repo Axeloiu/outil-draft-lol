@@ -156,7 +156,7 @@ details.ideal summary{cursor:pointer}
 .frl li.fr-top b{color:var(--blue)}.frl li.fr-bot b{color:var(--gold)}.frl li.next{background:rgba(239,68,68,.12);border-radius:4px}.frl li.past{opacity:.55}
 .pg-bilan,.pg-detail,.pg-plan{border:1px solid var(--line);border-radius:8px;padding:10px 12px;margin:10px 0}
 .pg-plan h3{margin:0 0 6px;font-size:15px}.pg-plan h4{margin:10px 0 4px;font-size:13px}
-.pg-pj{display:grid;grid-template-columns:repeat(auto-fill,minmax(480px,1fr));gap:10px}.pg-plan a{color:var(--gold)}.pg-j td:nth-child(n+2){white-space:nowrap}.pg-j{border:1px solid var(--line);border-radius:6px;padding:6px 8px}.pg-j table{width:100%}.pg-j details{margin-top:4px}.pg-j ul{margin:4px 0;padding-left:18px}
+.pg-pj{display:grid;grid-template-columns:repeat(auto-fill,minmax(480px,1fr));gap:10px}.pg-plan a{color:var(--gold)}#pgpdf{margin:6px 0 10px}#pgpdf summary{cursor:pointer;color:var(--gold);font-weight:600}#pgpdf iframe{width:100%;height:80vh;border:1px solid var(--line);border-radius:6px;background:#fff}.pg-pdfbar{display:flex;gap:12px;margin:6px 0}.pg-j td:nth-child(n+2){white-space:nowrap}.pg-j{border:1px solid var(--line);border-radius:6px;padding:6px 8px}.pg-j table{width:100%}.pg-j details{margin-top:4px}.pg-j ul{margin:4px 0;padding-left:18px}
 .pg-et{font-size:12px;padding:1px 6px;border-radius:10px;white-space:nowrap}.pg-et.ok{background:#4caf5033;color:#4caf50}.pg-et.prog{background:#c8aa6e33;color:var(--gold)}.pg-et.ko{background:#e5737333;color:#e57373}.pg-et.attente{opacity:.7}
 .pg-bilan h3,.pg-detail h3{margin:0 0 6px;font-size:15px}.pg-detail h4,.pg-bilan h4{margin:10px 0 4px;font-size:13px}
 .pg-2{display:grid;grid-template-columns:1fr 1fr;gap:12px}@media(max-width:800px){.pg-2{grid-template-columns:1fr}}
@@ -2872,7 +2872,7 @@ function pgBilan(list) {
 const PG_PLAN = {
   debut: 1795129200,   // 20/11/2026 00:00, heure de Paris
   fen: 15, min: 5,
-  doc: 'https://claude.ai/artifact/8WmjKBymcsnrnZXEbwJgRa',
+  pdf: 'plan-progression.pdf',   // export du plan complet, à la racine du site
   equipe: [
     { k: 'td14', lab: "Morts d'équipe avant 14 min, par partie", dep: 11.7, sens: -1, dec: 1, note: '10,6 en victoire, 13,5 en défaite au départ' },
     { k: 'bot14', lab: 'Or de la botlane (ADC + support) à 14 min face à la leur', dep: -944, sens: 1, dec: 0, or: 1 },
@@ -2980,7 +2980,10 @@ function pgPlanHtml(games) {
   const S = pgPlanSuivi(games), d = new Date(PG_PLAN.debut * 1000).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long' });
   const cell = o => { const [c, t] = pgPlanEtat(o); return `<td>${pgPlanFmt(o, o.dep)}</td><td><b>${pgPlanFmt(o, o.v)}</b> <small>(${o.n})</small></td><td><span class="pg-et ${c}">${t}</span></td>`; };
   let h = `<div class="pg-plan"><h3>Plan de progression · ${S.n} partie${S.n > 1 ? 's' : ''} depuis le ${d}</h3>
-    <p class="note">Départ = nos 39 parties au ${d}. Actuel = moyenne des parties jouées depuis, ${PG_PLAN.fen} au plus (nombre de parties entre parenthèses). Explications et sources dans le <a href="${PG_PLAN.doc}" target="_blank" rel="noopener">plan complet</a>.</p>
+    <p class="note">Départ = nos 39 parties au ${d}. Actuel = moyenne des parties jouées depuis, ${PG_PLAN.fen} au plus (nombre de parties entre parenthèses). Explications, chiffres et sources dans le plan complet, juste en dessous.</p>
+    <details id="pgpdf"${PG.planOpen ? ' open' : ''}><summary>Plan complet (PDF, 9 pages)</summary>
+      <div class="pg-pdfbar"><a class="lnk" href="${PG_PLAN.pdf}" target="_blank" rel="noopener">Nouvel onglet</a><a class="lnk" href="${PG_PLAN.pdf}" download>Télécharger</a></div>
+      <iframe title="Plan de progression"${PG.planOpen ? ` src="${PG_PLAN.pdf}#view=FitH"` : ''}></iframe></details>
     <h4>Les chantiers d'équipe</h4>
     <table class="sum"><tr><th>Mesure</th><th>Départ</th><th>Actuel</th><th>Évolution</th></tr>${S.eq.map(o => `<tr><td>${esc(o.lab)}${o.note ? ` <small class="note">(${esc(o.note)})</small>` : ''}</td>${cell(o)}</tr>`).join('')}</table>
     <h4>Par joueur</h4><div class="pg-pj">`;
@@ -3024,6 +3027,9 @@ function renderPost() {
 function pgBind() {
   const r = $('#pgre'); if (r) r.onclick = () => { PG.games = null; PG.err = null; renderPost(); pgLoad(true); };
   document.querySelectorAll('[data-pg]').forEach(b => b.onclick = () => { PG.sel = +b.dataset.pg; renderPost(); });
+  // plan complet : le PDF ne se charge qu'à l'ouverture, et le volet reste ouvert quand on change de partie
+  const pd = $('#pgpdf');
+  if (pd) pd.ontoggle = () => { PG.planOpen = pd.open; const f = pd.querySelector('iframe'); if (pd.open && !f.getAttribute('src')) f.src = PG_PLAN.pdf + '#view=FitH'; };
 }
 
 // ===== Interface =====
